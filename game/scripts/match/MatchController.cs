@@ -101,8 +101,8 @@ public partial class MatchController : Node3D
             if (args[i] == "--view" && i + 1 < args.Length && args[i + 1] == "top")
             {
                 _forceTableView = true;
-                _pitch = 1.45f;
-                _dist = 3.4f;
+                _pitch = 1.35f;
+                _dist = 2.3f;
             }
         }
 
@@ -153,14 +153,14 @@ public partial class MatchController : Node3D
                     if (InAimView)
                         _aimDist = Mathf.Clamp(_aimDist * 0.92f, 0.25f, 1.6f);
                     else
-                        _dist = Mathf.Clamp(_dist * 0.92f, 0.6f, 4.5f);
+                        _dist = Mathf.Clamp(_dist * 0.92f, 0.6f, 2.4f);
                 }
                 else if (mb.ButtonIndex == MouseButton.WheelDown)
                 {
                     if (InAimView)
                         _aimDist = Mathf.Clamp(_aimDist * 1.08f, 0.25f, 1.6f);
                     else
-                        _dist = Mathf.Clamp(_dist * 1.08f, 0.6f, 4.5f);
+                        _dist = Mathf.Clamp(_dist * 1.08f, 0.6f, 2.4f);
                 }
                 break;
 
@@ -260,7 +260,9 @@ public partial class MatchController : Node3D
         _message = $"{(type == GameType.EightBall ? "8-Ball" : "Snooker")} — Player {winnerBreaks + 1} to break";
 
         _tableNode?.QueueFree();
-        _tableNode = TableBuilder.Build(_table);
+        _tableNode = new Node3D { Name = "TableRoot" };
+        _tableNode.AddChild(TableBuilder.Build(_table));
+        _tableNode.AddChild(EnvironmentBuilder.Build((float)_table.HalfLength, (float)_table.HalfWidth));
         AddChild(_tableNode);
 
         if (_views is not null)
@@ -273,7 +275,8 @@ public partial class MatchController : Node3D
         {
             var id = _state.Balls[i].Id;
             var color = type == GameType.EightBall ? BallView.PoolColor(id) : BallView.SnookerColor(id);
-            _views[i] = BallView.Create(id, (float)_table.Physics.R, color);
+            var texture = type == GameType.EightBall ? $"res://assets/balls/pool_{id}.png" : null;
+            _views[i] = BallView.Create(id, (float)_table.Physics.R, color, texture);
             AddChild(_views[i]);
         }
         SnapViews();
@@ -545,6 +548,11 @@ public partial class MatchController : Node3D
 
         _camera.Position = _camPos;
         _camera.LookAt(_camLook, Vector3.Up);
+
+        // Steep top-down table view: cull the lamp shades so they don't block the
+        // view (their lights keep shining — only the meshes vanish).
+        var hideLamps = !InAimView && _pitch > 1.15f;
+        _camera.CullMask = hideLamps ? ~EnvironmentBuilder.LampLayer : uint.MaxValue;
     }
 
     private void UpdateCue()

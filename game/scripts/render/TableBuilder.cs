@@ -4,59 +4,87 @@ using Snookering.Core.Tables;
 namespace Snookering.Game.Render;
 
 /// <summary>
-/// Generates gray-box table visuals directly from the physics TableSpec, so what
-/// you see IS what the simulation collides with. The M3 beauty mesh replaces the
-/// looks, never the geometry source.
+/// Generates table visuals directly from the physics TableSpec, so what you see
+/// IS what the simulation collides with. M3 look: felt cloth with a woven normal,
+/// varnished wood rail frame + skirt + legs, brass-less gray-box pockets upgraded
+/// to leather rings. (A Blender hero mesh may replace the looks later — never the
+/// geometry source.)
 /// </summary>
 public static class TableBuilder
 {
     public const float CushionHeight = 0.045f;
-    public const float CushionBack = 0.06f;
-    public const float BedMargin = 0.12f;
+    public const float CushionBack = 0.05f;
+    private const float RailWidth = 0.14f;
+    private const float FrameTop = CushionHeight + 0.002f;
 
     public static Node3D Build(TableSpec spec)
     {
         var root = new Node3D { Name = "Table" };
+        var hl = (float)spec.HalfLength;
+        var hw = (float)spec.HalfWidth;
 
+        // ---- materials -----------------------------------------------------
+        var feltNoise = new NoiseTexture2D
+        {
+            Noise = new FastNoiseLite { Frequency = 0.35f, NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth },
+            AsNormalMap = true,
+            BumpStrength = 1.6f,
+            Width = 256,
+            Height = 256,
+            Seamless = true,
+        };
         var cloth = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.05f, 0.42f, 0.18f),
-            Roughness = 0.95f,
+            AlbedoColor = new Color(0.045f, 0.36f, 0.15f),
+            Roughness = 0.94f,
+            NormalEnabled = true,
+            NormalTexture = feltNoise,
+            NormalScale = 0.5f,
+            Uv1Scale = new Vector3(14f, 14f, 1f),
         };
-        var cushionMat = new StandardMaterial3D
+        var clothCushion = (StandardMaterial3D)cloth.Duplicate();
+        clothCushion.AlbedoColor = new Color(0.04f, 0.33f, 0.135f);
+
+        var wood = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.04f, 0.32f, 0.14f),
-            Roughness = 0.9f,
+            AlbedoColor = new Color(0.16f, 0.08f, 0.04f),
+            Roughness = 0.24f,
+            ClearcoatEnabled = true,
+            Clearcoat = 0.6f,
+            ClearcoatRoughness = 0.15f,
         };
-        var pocketMat = new StandardMaterial3D
+        var darkWood = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.03f, 0.03f, 0.03f),
-            Roughness = 0.6f,
+            AlbedoColor = new Color(0.13f, 0.065f, 0.035f),
+            Roughness = 0.4f,
+        };
+        var leather = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.045f, 0.035f, 0.03f),
+            Roughness = 0.55f,
+        };
+        var pocketHole = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.01f, 0.01f, 0.012f),
+            Roughness = 1f,
         };
 
-        // Bed: a slab whose top surface is the playfield plane (y = 0).
-        var bed = new MeshInstance3D
+        // ---- bed (playfield cloth) ------------------------------------------
+        root.AddChild(new MeshInstance3D
         {
             Name = "Bed",
-            Mesh = new BoxMesh
-            {
-                Size = new Vector3(
-                    2f * (float)spec.HalfLength + 2f * BedMargin,
-                    0.04f,
-                    2f * (float)spec.HalfWidth + 2f * BedMargin),
-            },
+            Mesh = new BoxMesh { Size = new Vector3(2f * hl + 0.10f, 0.04f, 2f * hw + 0.10f) },
             Position = new Vector3(0f, -0.02f, 0f),
             MaterialOverride = cloth,
-        };
-        root.AddChild(bed);
+        });
 
-        // Cushions: one box per physics segment, its inner face exactly on the segment.
+        // ---- cushions from physics segments ----------------------------------
         var i = 0;
         foreach (var seg in spec.Cushions)
         {
             var a = SimWorld.ToWorld(seg.A);
             var b = SimWorld.ToWorld(seg.B);
-            var n = SimWorld.ToWorld(seg.N); // horizontal, into the playfield
+            var n = SimWorld.ToWorld(seg.N);
             var mid = (a + b) * 0.5f;
             var len = (b - a).Length();
 
@@ -64,33 +92,29 @@ public static class TableBuilder
             {
                 Name = $"Cushion{i++}",
                 Mesh = new BoxMesh { Size = new Vector3(len, CushionHeight, CushionBack) },
-                MaterialOverride = cushionMat,
+                MaterialOverride = clothCushion,
             };
-
-            // Local axes: X along the segment, Z along the outward normal (−n).
             var xAxis = (b - a).Normalized();
             var zAxis = -n;
-            var yAxis = zAxis.Cross(xAxis);
-            box.Basis = new Basis(xAxis, yAxis, zAxis);
+            box.Basis = new Basis(xAxis, zAxis.Cross(xAxis), zAxis);
             box.Position = mid - n * (CushionBack * 0.5f) + new Vector3(0f, CushionHeight * 0.5f, 0f);
             root.AddChild(box);
         }
 
-        // Jaw arcs (snooker): approximate each arc with short chord boxes so the
-        // visible wall matches the physics circle.
+        // ---- jaw arcs as chord boxes ------------------------------------------
         var arcIdx = 0;
         foreach (var arc in spec.Jaws)
         {
             var a0 = Mathf.Atan2((float)arc.StartDir.Y, (float)arc.StartDir.X);
             var a1 = Mathf.Atan2((float)arc.EndDir.Y, (float)arc.EndDir.X);
-            var sweep = Mathf.Wrap(a1 - a0, 0f, Mathf.Tau); // Start→End is CCW in sim space
+            var sweep = Mathf.Wrap(a1 - a0, 0f, Mathf.Tau);
             const int chords = 4;
-            const float thickness = 0.02f;
+            const float thickness = 0.018f;
 
             for (var s = 0; s < chords; s++)
             {
                 var am = a0 + sweep * (s + 0.5f) / chords;
-                var radial = new Godot.Vector3(Mathf.Cos(am), 0f, -Mathf.Sin(am)); // sim→world
+                var radial = new Vector3(Mathf.Cos(am), 0f, -Mathf.Sin(am));
                 var centerWorld = SimWorld.ToWorld(arc.Center) + radial * ((float)arc.Radius + thickness * 0.5f);
                 var chordLen = 2f * (float)arc.Radius * Mathf.Sin(sweep / (2 * chords)) + 0.006f;
 
@@ -98,7 +122,7 @@ public static class TableBuilder
                 {
                     Name = $"Jaw{arcIdx}_{s}",
                     Mesh = new BoxMesh { Size = new Vector3(chordLen, CushionHeight, thickness) },
-                    MaterialOverride = cushionMat,
+                    MaterialOverride = clothCushion,
                 };
                 var tangent = new Vector3(radial.Z, 0f, -radial.X);
                 box.Basis = new Basis(tangent, Vector3.Up, radial);
@@ -108,61 +132,130 @@ public static class TableBuilder
             arcIdx++;
         }
 
-        // Baulk line + D (snooker).
-        if (spec.Snooker is { } spots)
+        // ---- wood frame: four rails around the cushions ------------------------
+        var innerL = hl + CushionBack;
+        var innerW = hw + CushionBack;
+        void Rail(string name, Vector3 size, Vector3 pos) => root.AddChild(new MeshInstance3D
         {
-            var lineMat = new StandardMaterial3D
-            {
-                AlbedoColor = new Color(0.85f, 0.85f, 0.8f),
-                Roughness = 1f,
-            };
-            var baulk = new MeshInstance3D
-            {
-                Name = "BaulkLine",
-                Mesh = new BoxMesh { Size = new Vector3(0.004f, 0.0012f, 2f * (float)spec.HalfWidth) },
-                Position = new Vector3((float)spots.BaulkX, 0.0011f, 0f),
-                MaterialOverride = lineMat,
-            };
-            root.AddChild(baulk);
+            Name = name,
+            Mesh = new BoxMesh { Size = size },
+            Position = pos,
+            MaterialOverride = wood,
+        });
+        var frameH = 0.10f;
+        var frameY = FrameTop - frameH / 2f;
+        Rail("RailN", new Vector3(2f * (innerL + RailWidth), frameH, RailWidth), new Vector3(0f, frameY, -(innerW + RailWidth / 2f)));
+        Rail("RailS", new Vector3(2f * (innerL + RailWidth), frameH, RailWidth), new Vector3(0f, frameY, innerW + RailWidth / 2f));
+        Rail("RailE", new Vector3(RailWidth, frameH, 2f * innerW), new Vector3(innerL + RailWidth / 2f, frameY, 0f));
+        Rail("RailW", new Vector3(RailWidth, frameH, 2f * innerW), new Vector3(-(innerL + RailWidth / 2f), frameY, 0f));
 
-            const int dSegs = 16;
-            for (var s = 0; s < dSegs; s++)
+        // ---- skirt + legs down to the floor -------------------------------------
+        var skirtH = 0.16f;
+        void Skirt(string name, Vector3 size, Vector3 pos) => root.AddChild(new MeshInstance3D
+        {
+            Name = name,
+            Mesh = new BoxMesh { Size = size },
+            Position = pos,
+            MaterialOverride = darkWood,
+        });
+        var skirtY = FrameTop - frameH - skirtH / 2f;
+        Skirt("SkirtN", new Vector3(2f * innerL, skirtH, 0.04f), new Vector3(0f, skirtY, -innerW));
+        Skirt("SkirtS", new Vector3(2f * innerL, skirtH, 0.04f), new Vector3(0f, skirtY, innerW));
+        Skirt("SkirtE", new Vector3(0.04f, skirtH, 2f * innerW), new Vector3(innerL, skirtY, 0f));
+        Skirt("SkirtW", new Vector3(0.04f, skirtH, 2f * innerW), new Vector3(-innerL, skirtY, 0f));
+
+        var legTop = FrameTop - frameH;
+        var legH = legTop - EnvironmentBuilder.FloorY;
+        foreach (var sx in new[] { 1f, -1f })
+        {
+            foreach (var sz in new[] { 1f, -1f })
             {
-                // Semicircle on the baulk side (−X half).
-                var ang = Mathf.Pi / 2f + Mathf.Pi * (s + 0.5f) / dSegs;
-                var mid = SimWorld.ToWorld(spots.DCenter, 0.0011f)
-                          + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * (float)spots.DRadiusValue;
-                var seg = new MeshInstance3D
+                root.AddChild(new MeshInstance3D
                 {
-                    Name = $"D{s}",
-                    Mesh = new BoxMesh
-                    {
-                        Size = new Vector3(2f * (float)spots.DRadiusValue * Mathf.Sin(Mathf.Pi / (2 * dSegs)) + 0.002f, 0.0012f, 0.004f),
-                    },
-                    Position = mid,
-                    MaterialOverride = lineMat,
-                };
-                seg.RotateY(-ang - Mathf.Pi / 2f);
-                root.AddChild(seg);
+                    Name = $"Leg{sx}{sz}",
+                    Mesh = new BoxMesh { Size = new Vector3(0.11f, legH, 0.11f) },
+                    Position = new Vector3(sx * (innerL - 0.10f), legTop - legH / 2f, sz * (innerW - 0.10f)),
+                    MaterialOverride = darkWood,
+                });
             }
         }
 
-        // Pockets: dark discs marking the fall circles.
+        // ---- pockets: hole disc + leather ring ------------------------------------
         foreach (var pocket in spec.Pockets)
         {
-            var disc = new MeshInstance3D
+            var center = SimWorld.ToWorld(pocket.FallCenter, 0.003f);
+            root.AddChild(new MeshInstance3D
             {
                 Name = $"Pocket{pocket.Id}",
                 Mesh = new CylinderMesh
                 {
-                    TopRadius = (float)pocket.FallRadius,
-                    BottomRadius = (float)pocket.FallRadius,
-                    Height = 0.006f,
+                    TopRadius = (float)pocket.FallRadius + 0.008f,
+                    BottomRadius = (float)pocket.FallRadius + 0.008f,
+                    Height = 0.005f,
                 },
-                Position = SimWorld.ToWorld(pocket.FallCenter, 0.004f),
-                MaterialOverride = pocketMat,
+                Position = center,
+                MaterialOverride = pocketHole,
+            });
+            root.AddChild(new MeshInstance3D
+            {
+                Name = $"PocketRing{pocket.Id}",
+                Mesh = new TorusMesh
+                {
+                    InnerRadius = (float)pocket.FallRadius + 0.006f,
+                    OuterRadius = (float)pocket.FallRadius + 0.024f,
+                },
+                Position = center + new Vector3(0f, 0.012f, 0f),
+                MaterialOverride = leather,
+            });
+        }
+
+        // ---- baulk line + D (snooker) ------------------------------------------
+        if (spec.Snooker is { } spots)
+        {
+            var lineMat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.8f, 0.8f, 0.75f),
+                Roughness = 1f,
             };
-            root.AddChild(disc);
+            root.AddChild(new MeshInstance3D
+            {
+                Name = "BaulkLine",
+                Mesh = new BoxMesh { Size = new Vector3(0.004f, 0.0012f, 2f * hw) },
+                Position = new Vector3((float)spots.BaulkX, 0.0011f, 0f),
+                MaterialOverride = lineMat,
+            });
+
+            const int dSegs = 24;
+            for (var s = 0; s < dSegs; s++)
+            {
+                var ang = Mathf.Pi / 2f + Mathf.Pi * (s + 0.5f) / dSegs;
+                var mid = SimWorld.ToWorld(spots.DCenter, 0.0011f)
+                          + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * (float)spots.DRadiusValue;
+                var segMesh = new MeshInstance3D
+                {
+                    Name = $"D{s}",
+                    Mesh = new BoxMesh
+                    {
+                        Size = new Vector3(2f * (float)spots.DRadiusValue * Mathf.Sin(Mathf.Pi / (2 * dSegs)) + 0.002f, 0.0012f, 0.003f),
+                    },
+                    Position = mid,
+                    MaterialOverride = lineMat,
+                };
+                segMesh.RotateY(-ang - Mathf.Pi / 2f);
+                root.AddChild(segMesh);
+            }
+
+            // Spots.
+            foreach (var spot in new[] { spots.Yellow, spots.Green, spots.Brown, spots.Blue, spots.Pink, spots.Black })
+            {
+                root.AddChild(new MeshInstance3D
+                {
+                    Name = "Spot",
+                    Mesh = new CylinderMesh { TopRadius = 0.006f, BottomRadius = 0.006f, Height = 0.001f },
+                    Position = SimWorld.ToWorld(spot, 0.0012f),
+                    MaterialOverride = lineMat,
+                });
+            }
         }
 
         return root;

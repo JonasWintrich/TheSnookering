@@ -49,22 +49,26 @@ public partial class BallView : MeshInstance3D
 
     public override void _Ready() => AddToGroup("balls");
 
-    public static BallView Create(byte id, float radius, Color color)
+    public static BallView Create(byte id, float radius, Color color, string? texturePath = null)
     {
+        var material = new StandardMaterial3D
+        {
+            AlbedoColor = texturePath is null ? color : Colors.White,
+            Roughness = 0.14f,
+            ClearcoatEnabled = true,
+            Clearcoat = 1.0f,
+            ClearcoatRoughness = 0.03f,
+        };
+        if (texturePath is not null)
+            material.AlbedoTexture = GD.Load<Texture2D>(texturePath);
+
         return new BallView
         {
             Name = $"Ball{id}",
             BallId = id,
             _radius = radius,
             Mesh = new SphereMesh { Radius = radius, Height = 2f * radius, RadialSegments = 48, Rings = 24 },
-            MaterialOverride = new StandardMaterial3D
-            {
-                AlbedoColor = color,
-                Roughness = 0.08f,
-                ClearcoatEnabled = true,
-                Clearcoat = 1.0f,
-                ClearcoatRoughness = 0.03f,
-            },
+            MaterialOverride = material,
         };
     }
 
