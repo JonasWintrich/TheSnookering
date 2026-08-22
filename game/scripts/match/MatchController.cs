@@ -9,29 +9,35 @@ namespace Snookering.Game.Match;
 
 /// <summary>
 /// Gray-box match scene driver (M1): owns the Core table state, converts input
-/// into ShotInput, runs the deterministic simulator, and plays back the returned
-/// trajectory. NO physics or rules logic lives here — translation only.
+/// into ShotInput, runs the deterministic simulator on a worker thread, and plays
+/// back the returned trajectory. NO physics or rules logic lives here.
 ///
-/// Controls: RMB-drag orbit · wheel zoom · arrows = spin · hold/release Space = shot power · R = re-rack.
+/// Controls: LMB-drag aim (rotates the cue) · RMB-drag orbit camera · wheel zoom ·
+/// arrows spin · hold/release Space = power · R = re-rack.
 /// </summary>
 public partial class MatchController : Node3D
 {
-    private enum Mode { Aiming, Simulating, Playback }
+    private enum Mode { Aiming, Striking, Simulating, Playback }
 
     private TableSpec _table = null!;
     private TableState _state = null!;
     private BallView[] _views = null!;
     private Camera3D _camera = null!;
-    private MeshInstance3D _aimLine = null!;
+    private CueView _cue = null!;
     private Label _info = null!;
     private ColorRect _powerFill = null!;
 
     private Mode _mode = Mode.Aiming;
 
-    // Camera rig state. Default yaw aims down the table toward the rack (+X in sim space).
-    private float _yaw = -Mathf.Pi / 2f;
-    private float _pitch = 0.6f;
-    private float _dist = 1.7f;
+    // Aim state (sim-plane radians; 0 points down the table toward the rack).
+    private float _aimAngle;
+    private bool _aiming;
+
+    // Camera rig: orbits the TABLE, not the cue ball.
+    private static readonly Vector3 TableFocus = new(0f, 0.1f, 0f);
+    private float _yaw = -Mathf.Pi / 2f; // behind the baulk end (cue ball side), looking at the rack
+    private float _pitch = 0.85f;
+    private float _dist = 2.7f;
     private bool _orbiting;
 
     // Shot input state.
@@ -40,7 +46,9 @@ public partial class MatchController : Node3D
     private float _power;
     private bool _charging;
 
-    // Simulation/playback state. The sim runs on a worker thread — never block the UI.
+    // Strike animation + simulation/playback state.
+    private float _strikeT;
+    private float _firedPower;
     private System.Threading.Tasks.Task<ShotResult>? _simTask;
     private ShotResult? _result;
     private double _playTime;
@@ -63,7 +71,9 @@ public partial class MatchController : Node3D
         AddChild(_camera);
         _camera.MakeCurrent();
 
-        BuildAimLine();
+        _cue = CueView.Create();
+        AddChild(_cue);
+
         BuildHud();
         UpdateCamera();
 
@@ -91,21 +101,33 @@ public partial class MatchController : Node3D
         switch (@event)
         {
             case InputEventMouseButton mb:
-                if (mb.ButtonIndex is MouseButton.Right or MouseButton.Left)
+                if (mb.ButtonIndex == MouseButton.Left)
+                {
+                    _aiming = mb.Pressed && _mode == Mode.Aiming;
+                    SetMouseCaptured(mb.Pressed && _aiming);
+                }
+                else if (mb.ButtonIndex == MouseButton.Right)
                 {
                     _orbiting = mb.Pressed;
-                    // Capture the mouse while dragging: smooth relative motion, no cursor drift.
-                    Input.MouseMode = _orbiting ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+                    SetMouseCaptured(mb.Pressed);
                 }
                 else if (mb.ButtonIndex == MouseButton.WheelUp)
-                    _dist = Mathf.Clamp(_dist * 0.92f, 0.35f, 3.5f);
+                    _dist = Mathf.Clamp(_dist * 0.92f, 0.6f, 4.5f);
                 else if (mb.ButtonIndex == MouseButton.WheelDown)
-                    _dist = Mathf.Clamp(_dist * 1.08f, 0.35f, 3.5f);
+                    _dist = Mathf.Clamp(_dist * 1.08f, 0.6f, 4.5f);
                 break;
 
-            case InputEventMouseMotion mm when _orbiting:
-                _yaw -= mm.Relative.X * 0.005f;
-                _pitch = Mathf.Clamp(_pitch + mm.Relative.Y * 0.005f, 0.12f, 1.45f);
+            case InputEventMouseMotion mm:
+                if (_orbiting)
+                {
+                    _yaw -= mm.Relative.X * 0.005f;
+                    _pitch = Mathf.Clamp(_pitch + mm.Relative.Y * 0.005f, 0.15f, 1.5f);
+                }
+                else if (_aiming)
+                {
+                    // Slower when zoomed in for fine aiming.
+                    _aimAngle -= mm.Relative.X * 0.0025f * Mathf.Clamp(_dist / 2.7f, 0.35f, 1f);
+                }
                 break;
 
             case InputEventKey key when key.Pressed && !key.Echo:
@@ -118,6 +140,9 @@ public partial class MatchController : Node3D
                 break;
         }
     }
+
+    private void SetMouseCaptured(bool captured) =>
+        Input.MouseMode = captured ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
 
     private void HandleKey(Key code)
     {
@@ -143,7 +168,9 @@ public partial class MatchController : Node3D
             case Key.R:
                 _state = Racks.EightBall(_table);
                 _result = null;
+                _simTask = null;
                 _mode = Mode.Aiming;
+                _aimAngle = 0f;
                 SetSpin(0f, 0f);
                 SnapViews();
                 break;
@@ -167,12 +194,10 @@ public partial class MatchController : Node3D
 
     private void Fire()
     {
-        var aim = AimAngleSim();
         var speed = 0.4 + _power * 6.6; // 0.4–7.0 m/s
-
         var shot = new ShotInput
         {
-            AimAngleMicroRad = (int)Math.Round(aim * 1e6),
+            AimAngleMicroRad = (int)Math.Round((double)_aimAngle * 1e6),
             SpeedMmPerSec = (int)Math.Round(speed * 1e3),
             OffsetSide1e4 = (short)Math.Round(_spinSide * 1e4),
             OffsetVert1e4 = (short)Math.Round(_spinVert * 1e4),
@@ -182,7 +207,10 @@ public partial class MatchController : Node3D
         var state = _state;
         var table = _table;
         _simTask = System.Threading.Tasks.Task.Run(() => Simulator.Run(state, shot, table));
-        _mode = Mode.Simulating;
+
+        _firedPower = _power;
+        _strikeT = 0f;
+        _mode = Mode.Striking;
         _power = 0f;
     }
 
@@ -212,13 +240,6 @@ public partial class MatchController : Node3D
         return false;
     }
 
-    private double AimAngleSim()
-    {
-        var forward = new Vector3(-Mathf.Sin(_yaw), 0f, -Mathf.Cos(_yaw));
-        var sim = SimWorld.ToSim(forward);
-        return Math.Atan2(sim.Y, sim.X);
-    }
-
     // ------------------------------------------------------------------ per-frame
 
     public override void _Process(double delta)
@@ -226,32 +247,39 @@ public partial class MatchController : Node3D
         if (_charging)
             _power = Mathf.PingPong((float)(_power + delta * 0.9), 1f);
 
-        if (_mode == Mode.Simulating && _simTask is not null && _simTask.IsCompleted)
+        switch (_mode)
         {
-            if (_simTask.IsCompletedSuccessfully)
-            {
-                _result = _simTask.Result;
-                _playTime = 0.0;
-                _mode = Mode.Playback;
-            }
-            else
-            {
-                GD.PrintErr($"[match] simulation failed: {_simTask.Exception?.GetBaseException().Message}");
-                _mode = Mode.Aiming;
-            }
-            _simTask = null;
-        }
+            case Mode.Striking:
+                _strikeT += (float)delta / 0.11f;
+                if (_strikeT >= 1f)
+                    _mode = Mode.Simulating;
+                break;
 
-        if (_mode == Mode.Playback && _result is not null)
-        {
-            _playTime += delta;
-            ApplyPlayback((float)delta);
-            if (_playTime >= _result.Duration + 0.3)
-                FinishPlayback();
+            case Mode.Simulating when _simTask is not null && _simTask.IsCompleted:
+                if (_simTask.IsCompletedSuccessfully)
+                {
+                    _result = _simTask.Result;
+                    _playTime = 0.0;
+                    _mode = Mode.Playback;
+                }
+                else
+                {
+                    GD.PrintErr($"[match] simulation failed: {_simTask.Exception?.GetBaseException().Message}");
+                    _mode = Mode.Aiming;
+                }
+                _simTask = null;
+                break;
+
+            case Mode.Playback when _result is not null:
+                _playTime += delta;
+                ApplyPlayback((float)delta);
+                if (_playTime >= _result.Duration + 0.3)
+                    FinishPlayback();
+                break;
         }
 
         UpdateCamera();
-        UpdateAimLine();
+        UpdateCue();
         UpdateHud();
     }
 
@@ -287,57 +315,44 @@ public partial class MatchController : Node3D
         }
     }
 
-    private Vector3 CueFocus()
+    private Vector3 CueBallPosition()
     {
         foreach (var v in _views)
-            if (v.BallId == 0 && v.Visible)
+            if (v.BallId == 0)
                 return v.Position;
         return Vector3.Zero;
     }
 
     private void UpdateCamera()
     {
-        var focus = CueFocus();
         var offset = new Vector3(
             Mathf.Sin(_yaw) * Mathf.Cos(_pitch),
             Mathf.Sin(_pitch),
             Mathf.Cos(_yaw) * Mathf.Cos(_pitch)) * _dist;
-        _camera.Position = focus + offset;
-        _camera.LookAt(focus, Vector3.Up);
+        _camera.Position = TableFocus + offset;
+        _camera.LookAt(TableFocus, Vector3.Up);
     }
 
-    // ------------------------------------------------------------------ aim line & HUD
-
-    private void BuildAimLine()
+    private void UpdateCue()
     {
-        _aimLine = new MeshInstance3D
-        {
-            Name = "AimLine",
-            Mesh = new ImmediateMesh(),
-            MaterialOverride = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                AlbedoColor = new Color(1f, 1f, 1f, 0.55f),
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            },
-        };
-        AddChild(_aimLine);
-    }
-
-    private void UpdateAimLine()
-    {
-        var mesh = (ImmediateMesh)_aimLine.Mesh;
-        mesh.ClearSurfaces();
-        if (_mode != Mode.Aiming)
+        var aimingPhase = _mode is Mode.Aiming or Mode.Striking;
+        _cue.Visible = aimingPhase;
+        if (!aimingPhase)
             return;
 
-        var start = CueFocus();
-        var dir = new Vector3(-Mathf.Sin(_yaw), 0f, -Mathf.Cos(_yaw));
-        mesh.SurfaceBegin(Mesh.PrimitiveType.Lines);
-        mesh.SurfaceAddVertex(start + dir * (float)_table.Physics.R);
-        mesh.SurfaceAddVertex(start + dir * 2.2f);
-        mesh.SurfaceEnd();
+        var strike = _mode == Mode.Striking ? Mathf.Clamp(_strikeT, 0f, 1f) : 0f;
+        var pull = _mode == Mode.Striking ? _firedPower : _power;
+        _cue.Place(
+            CueBallPosition(),
+            (float)_table.Physics.R,
+            _aimAngle,
+            _spinSide,
+            _spinVert,
+            pull,
+            strike);
     }
+
+    // ------------------------------------------------------------------ HUD
 
     private void BuildHud()
     {
@@ -380,8 +395,8 @@ public partial class MatchController : Node3D
         _powerFill.AnchorRight = _power;
         _info.Text = _mode switch
         {
-            Mode.Aiming => $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [drag] orbit  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack",
-            Mode.Simulating => "SIMULATING ...",
+            Mode.Aiming => $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB] aim  [RMB] orbit  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack",
+            Mode.Striking or Mode.Simulating => "STRIKE",
             _ => "SHOT ...",
         };
     }
