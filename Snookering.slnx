@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/game/">
+    <Project Path="game/Snookering.Game.csproj">
+      <BuildType Project="Debug" />
+    </Project>
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Snookering.Core/Snookering.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Snookering.Core.Tests/Snookering.Core.Tests.csproj" />
+  </Folder>
+</Solution>

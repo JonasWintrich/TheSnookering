@@ -1,0 +1,18 @@
+# Godot
+game/.godot/
+game/android/
+
+# Pinned engine binaries & downloaded tool payloads
+tools/godot/
+tools/*.zip
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Output artifacts
+out/
+*.png.import.tmp
