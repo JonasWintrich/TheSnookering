@@ -33,12 +33,19 @@ public partial class MatchController : Node3D
     private float _aimAngle;
     private bool _aiming;
 
-    // Camera rig: orbits the TABLE, not the cue ball.
+    // Two-camera scheme:
+    //  - Aiming: anchored low behind the cue ball, swinging with the aim (first-person-ish).
+    //  - Playback: free orbit around the table so the whole shot is visible.
     private static readonly Vector3 TableFocus = new(0f, 0.1f, 0f);
-    private float _yaw = -Mathf.Pi / 2f; // behind the baulk end (cue ball side), looking at the rack
+    private float _yaw = -Mathf.Pi / 2f; // playback orbit: behind the baulk end
     private float _pitch = 0.85f;
     private float _dist = 2.7f;
+    private float _aimDist = 0.6f;
+    private float _aimPitch = 0.30f; // low over the cue
     private bool _orbiting;
+    private Vector3 _camPos;
+    private Vector3 _camLook;
+    private bool _camInitialized;
 
     // Shot input state.
     private float _spinSide;
@@ -75,7 +82,7 @@ public partial class MatchController : Node3D
         AddChild(_cue);
 
         BuildHud();
-        UpdateCamera();
+        UpdateCamera(0f);
 
         // CLI test hook: "--break [power01]" fires a break immediately (harness verification).
         var args = OS.GetCmdlineUserArgs();
@@ -112,21 +119,40 @@ public partial class MatchController : Node3D
                     SetMouseCaptured(mb.Pressed);
                 }
                 else if (mb.ButtonIndex == MouseButton.WheelUp)
-                    _dist = Mathf.Clamp(_dist * 0.92f, 0.6f, 4.5f);
+                {
+                    if (InAimView)
+                        _aimDist = Mathf.Clamp(_aimDist * 0.92f, 0.25f, 1.6f);
+                    else
+                        _dist = Mathf.Clamp(_dist * 0.92f, 0.6f, 4.5f);
+                }
                 else if (mb.ButtonIndex == MouseButton.WheelDown)
-                    _dist = Mathf.Clamp(_dist * 1.08f, 0.6f, 4.5f);
+                {
+                    if (InAimView)
+                        _aimDist = Mathf.Clamp(_aimDist * 1.08f, 0.25f, 1.6f);
+                    else
+                        _dist = Mathf.Clamp(_dist * 1.08f, 0.6f, 4.5f);
+                }
                 break;
 
             case InputEventMouseMotion mm:
-                if (_orbiting)
+                if (_aiming && InAimView)
                 {
-                    _yaw -= mm.Relative.X * 0.005f;
-                    _pitch = Mathf.Clamp(_pitch + mm.Relative.Y * 0.005f, 0.15f, 1.5f);
+                    // The camera hangs behind the cue, so turning the aim IS turning the view.
+                    _aimAngle -= mm.Relative.X * 0.002f * Mathf.Clamp(_aimDist / 0.6f, 0.4f, 1f);
+                    _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, 0.10f, 1.1f);
                 }
-                else if (_aiming)
+                else if (_orbiting)
                 {
-                    // Slower when zoomed in for fine aiming.
-                    _aimAngle -= mm.Relative.X * 0.0025f * Mathf.Clamp(_dist / 2.7f, 0.35f, 1f);
+                    if (InAimView)
+                    {
+                        _aimAngle -= mm.Relative.X * 0.002f;
+                        _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, 0.10f, 1.1f);
+                    }
+                    else
+                    {
+                        _yaw -= mm.Relative.X * 0.005f;
+                        _pitch = Mathf.Clamp(_pitch + mm.Relative.Y * 0.005f, 0.15f, 1.5f);
+                    }
                 }
                 break;
 
@@ -278,7 +304,7 @@ public partial class MatchController : Node3D
                 break;
         }
 
-        UpdateCamera();
+        UpdateCamera((float)delta);
         UpdateCue();
         UpdateHud();
     }
@@ -323,14 +349,48 @@ public partial class MatchController : Node3D
         return Vector3.Zero;
     }
 
-    private void UpdateCamera()
+    private bool InAimView => _mode is Mode.Aiming or Mode.Striking;
+
+    private void UpdateCamera(float dt)
     {
-        var offset = new Vector3(
-            Mathf.Sin(_yaw) * Mathf.Cos(_pitch),
-            Mathf.Sin(_pitch),
-            Mathf.Cos(_yaw) * Mathf.Cos(_pitch)) * _dist;
-        _camera.Position = TableFocus + offset;
-        _camera.LookAt(TableFocus, Vector3.Up);
+        Vector3 targetPos, targetLook;
+
+        if (InAimView)
+        {
+            // Low behind the cue ball, looking down the aim line.
+            var ball = CueBallPosition();
+            var dir = new Vector3(Mathf.Cos(_aimAngle), 0f, -Mathf.Sin(_aimAngle));
+            targetPos = ball
+                        - dir * (_aimDist * Mathf.Cos(_aimPitch))
+                        + Vector3.Up * (_aimDist * Mathf.Sin(_aimPitch));
+            targetLook = ball + dir * 0.6f;
+        }
+        else
+        {
+            var offset = new Vector3(
+                Mathf.Sin(_yaw) * Mathf.Cos(_pitch),
+                Mathf.Sin(_pitch),
+                Mathf.Cos(_yaw) * Mathf.Cos(_pitch)) * _dist;
+            targetPos = TableFocus + offset;
+            targetLook = TableFocus;
+        }
+
+        if (!_camInitialized)
+        {
+            _camPos = targetPos;
+            _camLook = targetLook;
+            _camInitialized = true;
+        }
+        else
+        {
+            // Exponential smoothing: fast enough to feel direct, soft on mode switches.
+            var k = 1f - Mathf.Exp(-12f * dt);
+            _camPos = _camPos.Lerp(targetPos, k);
+            _camLook = _camLook.Lerp(targetLook, k);
+        }
+
+        _camera.Position = _camPos;
+        _camera.LookAt(_camLook, Vector3.Up);
     }
 
     private void UpdateCue()
@@ -395,7 +455,7 @@ public partial class MatchController : Node3D
         _powerFill.AnchorRight = _power;
         _info.Text = _mode switch
         {
-            Mode.Aiming => $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB] aim  [RMB] orbit  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack",
+            Mode.Aiming => $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [drag up/down] camera height  [wheel] closer/further  [arrows] spin  [Space] power  [R] re-rack",
             Mode.Striking or Mode.Simulating => "STRIKE",
             _ => "SHOT ...",
         };
