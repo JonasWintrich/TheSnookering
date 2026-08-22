@@ -23,6 +23,21 @@ public static class TableBuilder
         var hl = (float)spec.HalfLength;
         var hw = (float)spec.HalfWidth;
 
+        // Hero mesh (Blender-built from the same TableSpec JSON) replaces the
+        // procedural body when present; procedural stays as the fallback.
+        var heroPath = spec.Snooker is null
+            ? "res://assets/models/table_pool.glb"
+            : "res://assets/models/table_snooker.glb";
+        if (ResourceLoader.Exists(heroPath))
+        {
+            var hero = GD.Load<PackedScene>(heroPath).Instantiate<Node3D>();
+            hero.Name = "HeroTable";
+            RemapMaterials(hero);
+            root.AddChild(hero);
+            AddMarkings(root, spec, hw);
+            return root;
+        }
+
         // ---- materials -----------------------------------------------------
         var feltNoise = new NoiseTexture2D
         {
@@ -247,7 +262,83 @@ public static class TableBuilder
             }
         }
 
-        // ---- baulk line + D (snooker) ------------------------------------------
+        AddMarkings(root, spec, hw);
+        return root;
+    }
+
+    /// <summary>Replace imported GLB materials with the richer runtime versions, by name.</summary>
+    private static void RemapMaterials(Node3D hero)
+    {
+        var map = RuntimeMaterials();
+        foreach (var node in hero.FindChildren("*", "MeshInstance3D", recursive: true, owned: false))
+        {
+            if (node is not MeshInstance3D mi || mi.Mesh is null)
+                continue;
+            for (var s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
+            {
+                var name = mi.Mesh.SurfaceGetMaterial(s)?.ResourceName ?? "";
+                if (map.TryGetValue(name, out var replacement))
+                    mi.SetSurfaceOverrideMaterial(s, replacement);
+            }
+        }
+    }
+
+    private static System.Collections.Generic.Dictionary<string, Material> RuntimeMaterials()
+    {
+        var feltNoise = new NoiseTexture2D
+        {
+            Noise = new FastNoiseLite { Frequency = 0.35f, NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth },
+            AsNormalMap = true,
+            BumpStrength = 1.6f,
+            Width = 256,
+            Height = 256,
+            Seamless = true,
+        };
+        var cloth = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.045f, 0.36f, 0.15f),
+            Roughness = 0.94f,
+            NormalEnabled = true,
+            NormalTexture = feltNoise,
+            NormalScale = 0.5f,
+            Uv1Scale = new Vector3(14f, 14f, 1f),
+        };
+        var cushion = (StandardMaterial3D)cloth.Duplicate();
+        cushion.AlbedoColor = new Color(0.04f, 0.33f, 0.135f);
+
+        return new System.Collections.Generic.Dictionary<string, Material>
+        {
+            ["Cloth"] = cloth,
+            ["CushionCloth"] = cushion,
+            ["Wood"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.16f, 0.08f, 0.04f),
+                Roughness = 0.24f,
+                ClearcoatEnabled = true,
+                Clearcoat = 0.6f,
+                ClearcoatRoughness = 0.15f,
+            },
+            ["DarkWood"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.13f, 0.065f, 0.035f),
+                Roughness = 0.4f,
+            },
+            ["Leather"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.045f, 0.035f, 0.03f),
+                Roughness = 0.55f,
+            },
+            ["Hole"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.004f, 0.004f, 0.005f),
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            },
+        };
+    }
+
+    /// <summary>Baulk line, D and spots (snooker) — drawn on top of either table body.</summary>
+    private static void AddMarkings(Node3D root, TableSpec spec, float hw)
+    {
         if (spec.Snooker is { } spots)
         {
             var lineMat = new StandardMaterial3D
@@ -295,7 +386,5 @@ public static class TableBuilder
                 });
             }
         }
-
-        return root;
     }
 }

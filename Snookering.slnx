@@ -6,6 +6,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Snookering.Core/Snookering.Core.csproj" />
+    <Project Path="src/Snookering.Tools/Snookering.Tools.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Snookering.Core.Tests/Snookering.Core.Tests.csproj" />

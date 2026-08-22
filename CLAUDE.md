@@ -33,6 +33,21 @@ Harness flags (parsed by `game/scripts/debug/DebugAutoload.cs`, always after `--
 
 If Godot is missing from `tools/`, re-download: `Godot_v4.7.2-stable_mono_win64.zip` from github.com/godotengine/godot-builds releases, extract into `tools/godot/`.
 
+Asset regeneration (all procedural, deterministic):
+
+```bash
+python tools/gen_ball_textures.py        # pool ball albedos -> game/assets/balls/
+python tools/gen_audio.py                # synthesized WAVs -> game/assets/audio/
+dotnet run --project src/Snookering.Tools -- dump-tables tools/tables.json   # physics geometry as JSON
+"/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" --background \
+  --python tools/make_table.py -- tools/tables.json game/assets/models      # hero table GLBs
+```
+
+Run `--headless --import` after regenerating any asset. Hero GLB material names
+(Cloth/CushionCloth/Wood/DarkWood/Leather/Hole) are a contract: TableBuilder
+remaps them to runtime materials by name; the procedural table remains as the
+fallback when the GLBs are absent.
+
 ## Architecture — the one rule that matters
 
 **`src/Snookering.Core/` is a pure .NET library with ZERO Godot references. `game/scripts/` is presentation only and contains ZERO physics or rules logic.** Never break this boundary in either direction. It is what makes the sim unit-testable in seconds, deterministic for future multiplayer (clients exchange tiny quantized `ShotInput` structs and re-simulate identically), and reusable on a future authoritative server.
