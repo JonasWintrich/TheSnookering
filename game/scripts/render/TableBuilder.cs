@@ -195,42 +195,56 @@ public static class TableBuilder
             }
         }
 
-        // ---- pockets: leather casting cup in the rail gap + unshaded black hole ----
+        // ---- pockets: a pitch-black hole at cloth level plus a leather casting
+        // ARC that wraps only the OUTER side of the opening up to rail height —
+        // the playfield side stays fully open so balls roll (and are seen to
+        // roll) straight in, like a real table.
         pocketHole.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
         pocketHole.AlbedoColor = new Color(0.004f, 0.004f, 0.005f);
         foreach (var pocket in spec.Pockets)
         {
             var fall = SimWorld.ToWorld(pocket.FallCenter);
-            var cupR = (float)pocket.FallRadius + 0.026f;
+            var holeR = (float)pocket.FallRadius + 0.008f;
 
-            // Leather cup: a ring wall standing in the rail gap around the drop.
-            root.AddChild(new MeshInstance3D
-            {
-                Name = $"PocketCup{pocket.Id}",
-                Mesh = new CylinderMesh
-                {
-                    TopRadius = cupR,
-                    BottomRadius = cupR * 0.94f,
-                    Height = frameH,
-                    RadialSegments = 24,
-                },
-                Position = fall + new Vector3(0f, FrameTop - frameH / 2f - 0.012f, 0f),
-                MaterialOverride = leather,
-            });
-
-            // The hole: pitch-black unshaded disc slightly above the cup's top face.
             root.AddChild(new MeshInstance3D
             {
                 Name = $"Pocket{pocket.Id}",
-                Mesh = new CylinderMesh
-                {
-                    TopRadius = (float)pocket.FallRadius + 0.006f,
-                    BottomRadius = (float)pocket.FallRadius + 0.006f,
-                    Height = 0.004f,
-                },
-                Position = fall + new Vector3(0f, FrameTop - 0.010f, 0f),
+                Mesh = new CylinderMesh { TopRadius = holeR, BottomRadius = holeR, Height = 0.003f },
+                Position = fall + new Vector3(0f, 0.0016f, 0f),
                 MaterialOverride = pocketHole,
             });
+
+            // Outward direction (sim space): away from the playfield.
+            var isSide = Mathf.Abs((float)pocket.FallCenter.X) < 0.2f;
+            var outAngle = isSide
+                ? Mathf.Atan2(Mathf.Sign((float)pocket.FallCenter.Y), 0f)
+                : Mathf.Atan2(Mathf.Sign((float)pocket.FallCenter.Y) * 0.70710678f,
+                              Mathf.Sign((float)pocket.FallCenter.X) * 0.70710678f);
+
+            // Casting wall: chord boxes along the outer ~210° arc, from below deck
+            // up to just under rail height.
+            const int wallBoxes = 7;
+            var halfSpan = Mathf.DegToRad(105f);
+            var wallR = holeR + 0.006f;
+            const float wallTop = FrameTop - 0.004f;
+            const float wallBottom = -0.06f;
+            for (var s = 0; s < wallBoxes; s++)
+            {
+                var a = outAngle - halfSpan + 2f * halfSpan * (s + 0.5f) / wallBoxes;
+                var radialSim = new Vector3(Mathf.Cos(a), 0f, -Mathf.Sin(a));
+                var chord = 2f * wallR * Mathf.Sin(halfSpan / wallBoxes) + 0.004f;
+
+                var box = new MeshInstance3D
+                {
+                    Name = $"PocketWall{pocket.Id}_{s}",
+                    Mesh = new BoxMesh { Size = new Vector3(chord, wallTop - wallBottom, 0.012f) },
+                    MaterialOverride = leather,
+                };
+                var tangent = new Vector3(radialSim.Z, 0f, -radialSim.X);
+                box.Basis = new Basis(tangent, Vector3.Up, radialSim);
+                box.Position = fall + radialSim * wallR + new Vector3(0f, (wallTop + wallBottom) / 2f, 0f);
+                root.AddChild(box);
+            }
         }
 
         // ---- baulk line + D (snooker) ------------------------------------------
