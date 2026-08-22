@@ -76,6 +76,77 @@ public static class TableBuilder
             root.AddChild(box);
         }
 
+        // Jaw arcs (snooker): approximate each arc with short chord boxes so the
+        // visible wall matches the physics circle.
+        var arcIdx = 0;
+        foreach (var arc in spec.Jaws)
+        {
+            var a0 = Mathf.Atan2((float)arc.StartDir.Y, (float)arc.StartDir.X);
+            var a1 = Mathf.Atan2((float)arc.EndDir.Y, (float)arc.EndDir.X);
+            var sweep = Mathf.Wrap(a1 - a0, 0f, Mathf.Tau); // Start→End is CCW in sim space
+            const int chords = 4;
+            const float thickness = 0.02f;
+
+            for (var s = 0; s < chords; s++)
+            {
+                var am = a0 + sweep * (s + 0.5f) / chords;
+                var radial = new Godot.Vector3(Mathf.Cos(am), 0f, -Mathf.Sin(am)); // sim→world
+                var centerWorld = SimWorld.ToWorld(arc.Center) + radial * ((float)arc.Radius + thickness * 0.5f);
+                var chordLen = 2f * (float)arc.Radius * Mathf.Sin(sweep / (2 * chords)) + 0.006f;
+
+                var box = new MeshInstance3D
+                {
+                    Name = $"Jaw{arcIdx}_{s}",
+                    Mesh = new BoxMesh { Size = new Vector3(chordLen, CushionHeight, thickness) },
+                    MaterialOverride = cushionMat,
+                };
+                var tangent = new Vector3(radial.Z, 0f, -radial.X);
+                box.Basis = new Basis(tangent, Vector3.Up, radial);
+                box.Position = centerWorld + new Vector3(0f, CushionHeight * 0.5f, 0f);
+                root.AddChild(box);
+            }
+            arcIdx++;
+        }
+
+        // Baulk line + D (snooker).
+        if (spec.Snooker is { } spots)
+        {
+            var lineMat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.85f, 0.85f, 0.8f),
+                Roughness = 1f,
+            };
+            var baulk = new MeshInstance3D
+            {
+                Name = "BaulkLine",
+                Mesh = new BoxMesh { Size = new Vector3(0.004f, 0.0012f, 2f * (float)spec.HalfWidth) },
+                Position = new Vector3((float)spots.BaulkX, 0.0011f, 0f),
+                MaterialOverride = lineMat,
+            };
+            root.AddChild(baulk);
+
+            const int dSegs = 16;
+            for (var s = 0; s < dSegs; s++)
+            {
+                // Semicircle on the baulk side (−X half).
+                var ang = Mathf.Pi / 2f + Mathf.Pi * (s + 0.5f) / dSegs;
+                var mid = SimWorld.ToWorld(spots.DCenter, 0.0011f)
+                          + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * (float)spots.DRadiusValue;
+                var seg = new MeshInstance3D
+                {
+                    Name = $"D{s}",
+                    Mesh = new BoxMesh
+                    {
+                        Size = new Vector3(2f * (float)spots.DRadiusValue * Mathf.Sin(Mathf.Pi / (2 * dSegs)) + 0.002f, 0.0012f, 0.004f),
+                    },
+                    Position = mid,
+                    MaterialOverride = lineMat,
+                };
+                seg.RotateY(-ang - Mathf.Pi / 2f);
+                root.AddChild(seg);
+            }
+        }
+
         // Pockets: dark discs marking the fall circles.
         foreach (var pocket in spec.Pockets)
         {

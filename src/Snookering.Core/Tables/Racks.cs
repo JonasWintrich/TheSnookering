@@ -30,6 +30,37 @@ public static class Racks
     /// <summary>Head spot: cue-ball break position mirror (−X half).</summary>
     public static Vec2 HeadSpot(TableSpec table) => new(-table.HalfLength / 2.0, 0.0);
 
+    /// <summary>Snooker frame: 15 reds behind the pink, colors on their spots, cue in the D.</summary>
+    public static TableState Snooker(TableSpec table)
+    {
+        var spots = table.Snooker!;
+        var r = table.Physics.R;
+        var step = 2.0 * r * RackSpacing;
+
+        var balls = new BallState[22];
+        balls[0] = BallState.AtRest(0, new Vec2(spots.BaulkX - 0.16, 0.12)); // in the D
+
+        var apex = new Vec2(spots.Pink.X + 2.0 * r + 0.004, 0.0);
+        byte red = 1;
+        var index = 1;
+        for (var row = 0; row < 5; row++)
+        {
+            var x = apex.X + row * step * Sqrt3Over2;
+            var y0 = -0.5 * row * step;
+            for (var k = 0; k <= row; k++)
+                balls[index++] = BallState.AtRest(red++, new Vec2(x, y0 + k * step));
+        }
+
+        balls[index++] = BallState.AtRest(SnookerBalls.Yellow, spots.Yellow);
+        balls[index++] = BallState.AtRest(SnookerBalls.Green, spots.Green);
+        balls[index++] = BallState.AtRest(SnookerBalls.Brown, spots.Brown);
+        balls[index++] = BallState.AtRest(SnookerBalls.Blue, spots.Blue);
+        balls[index++] = BallState.AtRest(SnookerBalls.Pink, spots.Pink);
+        balls[index] = BallState.AtRest(SnookerBalls.Black, spots.Black);
+
+        return new TableState(balls);
+    }
+
     public static TableState EightBall(TableSpec table)
     {
         var r = table.Physics.R;

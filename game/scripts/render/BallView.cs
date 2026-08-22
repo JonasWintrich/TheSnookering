@@ -15,7 +15,7 @@ public partial class BallView : MeshInstance3D
     private bool _sinking;
     private float _sinkT;
 
-    private static readonly Color[] BallColors =
+    private static readonly Color[] PoolColors =
     {
         new(0.95f, 0.93f, 0.88f), // 0 cue
         new(0.95f, 0.77f, 0.06f), // 1 yellow
@@ -28,14 +28,29 @@ public partial class BallView : MeshInstance3D
         new(0.05f, 0.05f, 0.05f), // 8 black
     };
 
-    public override void _Ready() => AddToGroup("balls");
-
-    public static BallView Create(byte id, float radius)
+    public static Color PoolColor(byte id)
     {
         var stripe = id > 8;
-        var baseColor = BallColors[stripe ? id - 8 : id];
-        var color = stripe ? baseColor.Lerp(Colors.White, 0.45f) : baseColor;
+        var baseColor = PoolColors[stripe ? id - 8 : id];
+        return stripe ? baseColor.Lerp(Colors.White, 0.45f) : baseColor;
+    }
 
+    public static Color SnookerColor(byte id) => id switch
+    {
+        0 => new Color(0.95f, 0.93f, 0.88f),
+        16 => new Color(0.95f, 0.82f, 0.10f), // yellow
+        17 => new Color(0.06f, 0.42f, 0.16f), // green
+        18 => new Color(0.48f, 0.28f, 0.12f), // brown
+        19 => new Color(0.10f, 0.25f, 0.78f), // blue
+        20 => new Color(0.94f, 0.55f, 0.65f), // pink
+        21 => new Color(0.05f, 0.05f, 0.05f), // black
+        _ => new Color(0.78f, 0.08f, 0.08f),  // reds
+    };
+
+    public override void _Ready() => AddToGroup("balls");
+
+    public static BallView Create(byte id, float radius, Color color)
+    {
         return new BallView
         {
             Name = $"Ball{id}",
@@ -52,6 +67,9 @@ public partial class BallView : MeshInstance3D
             },
         };
     }
+
+    public void SetBaseColor(Color color) =>
+        ((StandardMaterial3D)MaterialOverride).AlbedoColor = color;
 
     public void Apply(in BallSample sample, float dt)
     {

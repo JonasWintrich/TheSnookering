@@ -27,8 +27,13 @@ public sealed class TableSpec
 
     public required string Name { get; init; }
 
+    /// <summary>Snooker spot/D data; null on pool tables.</summary>
+    public SnookerSpots? Snooker { get; init; }
+
     /// <summary>Y of the head string (ball-in-hand zone boundary), pool convention: quarter table.</summary>
     public double HeadStringX => HalfLength / 2.0;
 
     public static TableSpec Pool9ft() => PoolTableFactory.Build();
+
+    public static TableSpec Snooker12ft() => SnookerTableFactory.Build();
 }

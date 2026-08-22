@@ -20,6 +20,8 @@ public partial class MatchController : Node3D
 {
     private enum Mode { Aiming, Striking, Simulating, Playback, BallInHand }
 
+    public enum GameType { EightBall, Snooker }
+
     private TableSpec _table = null!;
     private TableState _state = null!;
     private BallView[] _views = null!;
@@ -63,28 +65,22 @@ public partial class MatchController : Node3D
     private TableState? _preShotState;
 
     // Rules.
+    private GameType _gameType = GameType.EightBall;
     private readonly EightBallRules _rules = new();
     private EightBallGame _game = new();
+    private SnookerRules? _snookerRules;
+    private SnookerGame _snookerGame = new();
     private string _message = "Player 1 to break";
 
-    // Ball-in-hand placement.
+    // Ball-in-hand placement (restrictedToD = snooker in-hand).
     private CoreVec2 _placement;
     private bool _placementValid;
+    private bool _placementInD;
+
+    private Node3D? _tableNode;
 
     public override void _Ready()
     {
-        _table = TableSpec.Pool9ft();
-        AddChild(TableBuilder.Build(_table));
-
-        _state = Racks.EightBall(_table);
-        _views = new BallView[_state.Balls.Length];
-        for (var i = 0; i < _state.Balls.Length; i++)
-        {
-            _views[i] = BallView.Create(_state.Balls[i].Id, (float)_table.Physics.R);
-            AddChild(_views[i]);
-        }
-        SnapViews();
-
         _camera = new Camera3D { Name = "MatchCamera", Fov = 55f };
         AddChild(_camera);
         _camera.MakeCurrent();
@@ -93,10 +89,17 @@ public partial class MatchController : Node3D
         AddChild(_cue);
 
         BuildHud();
-        UpdateCamera(0f);
 
-        // CLI test hook: "--break [power01]" fires a break immediately (harness verification).
+        // CLI test hooks: "--game snooker|8ball" selects the game,
+        // "--break [power01]" fires a break immediately (harness verification).
         var args = OS.GetCmdlineUserArgs();
+        var startType = GameType.EightBall;
+        for (var i = 0; i < args.Length; i++)
+            if (args[i] == "--game" && i + 1 < args.Length && args[i + 1] == "snooker")
+                startType = GameType.Snooker;
+
+        StartRack(startType);
+        UpdateCamera(0f);
         for (var i = 0; i < args.Length; i++)
         {
             if (args[i] == "--break")
@@ -194,7 +197,7 @@ public partial class MatchController : Node3D
         const float step = 0.05f;
         switch (code)
         {
-            case Key.Space when _mode == Mode.Aiming && !_game.GameOver:
+            case Key.Space when _mode == Mode.Aiming && !(_gameType == GameType.EightBall ? _game.GameOver : _snookerGame.FrameOver):
                 _charging = true;
                 _power = 0f;
                 break;
@@ -211,16 +214,10 @@ public partial class MatchController : Node3D
                 SetSpin(_spinSide, _spinVert - step);
                 break;
             case Key.R:
-                var breaker = _game.GameOver && _game.Winner >= 0 ? _game.Winner : 0; // winner breaks
-                _state = Racks.EightBall(_table);
-                _game = new EightBallGame { CurrentPlayer = breaker };
-                _message = $"Player {breaker + 1} to break";
-                _result = null;
-                _simTask = null;
-                _mode = Mode.Aiming;
-                _aimAngle = 0f;
-                SetSpin(0f, 0f);
-                SnapViews();
+                StartRack(_gameType);
+                break;
+            case Key.G when _mode is Mode.Aiming or Mode.BallInHand:
+                StartRack(_gameType == GameType.EightBall ? GameType.Snooker : GameType.EightBall);
                 break;
         }
     }
@@ -236,6 +233,48 @@ public partial class MatchController : Node3D
         }
         _spinSide = side;
         _spinVert = vert;
+    }
+
+    /// <summary>(Re)build table, balls, and match state for the chosen game.</summary>
+    private void StartRack(GameType type)
+    {
+        var winnerBreaks = type == _gameType
+            ? _gameType == GameType.EightBall
+                ? (_game.GameOver && _game.Winner >= 0 ? _game.Winner : 0)
+                : (_snookerGame.FrameOver && _snookerGame.Winner >= 0 ? _snookerGame.Winner : 0)
+            : 0;
+
+        _gameType = type;
+        _table = type == GameType.EightBall ? TableSpec.Pool9ft() : TableSpec.Snooker12ft();
+        _snookerRules = type == GameType.Snooker ? new SnookerRules(_table) : null;
+        _game = new EightBallGame { CurrentPlayer = winnerBreaks };
+        _snookerGame = new SnookerGame { CurrentPlayer = winnerBreaks };
+        _message = $"{(type == GameType.EightBall ? "8-Ball" : "Snooker")} — Player {winnerBreaks + 1} to break";
+
+        _tableNode?.QueueFree();
+        _tableNode = TableBuilder.Build(_table);
+        AddChild(_tableNode);
+
+        if (_views is not null)
+            foreach (var v in _views)
+                v.QueueFree();
+
+        _state = type == GameType.EightBall ? Racks.EightBall(_table) : Racks.Snooker(_table);
+        _views = new BallView[_state.Balls.Length];
+        for (var i = 0; i < _state.Balls.Length; i++)
+        {
+            var id = _state.Balls[i].Id;
+            var color = type == GameType.EightBall ? BallView.PoolColor(id) : BallView.SnookerColor(id);
+            _views[i] = BallView.Create(id, (float)_table.Physics.R, color);
+            AddChild(_views[i]);
+        }
+        SnapViews();
+
+        _result = null;
+        _simTask = null;
+        _mode = Mode.Aiming;
+        _aimAngle = 0f;
+        SetSpin(0f, 0f);
     }
 
     // ------------------------------------------------------------------ shot flow
@@ -266,35 +305,43 @@ public partial class MatchController : Node3D
     private void FinishPlayback()
     {
         _state = _result!.FinalState;
-        var outcome = _rules.Apply(_game, _preShotState!, _result);
-        GD.Print($"[rules] shot adjudicated: {outcome.Message} (foul={outcome.Foul}, events={_result.Events.Count})");
-        _message = outcome.Message;
-        _result = null;
 
-        if (outcome.GameOver)
+        bool ballInHand, inD = false, over;
+        if (_gameType == GameType.EightBall)
         {
-            // Leave the table as it lies; R starts the next rack (winner breaks).
-            _mode = Mode.Aiming;
-        }
-        else if (outcome.BallInHand)
-        {
-            EnterBallInHand();
+            var outcome = _rules.Apply(_game, _preShotState!, _result);
+            _message = outcome.Message;
+            ballInHand = outcome.BallInHand;
+            over = outcome.GameOver;
         }
         else
         {
-            _mode = Mode.Aiming;
+            var outcome = _snookerRules!.Apply(_snookerGame, _preShotState!, _result);
+            _message = outcome.Message;
+            ballInHand = outcome.BallInHandInD;
+            inD = ballInHand;
+            over = outcome.FrameOver;
         }
+        _result = null;
+
+        if (!over && ballInHand)
+            EnterBallInHand(inD);
+        else
+            _mode = Mode.Aiming;
         SnapViews();
     }
 
     // ------------------------------------------------------------------ ball in hand
 
-    private void EnterBallInHand()
+    private void EnterBallInHand(bool restrictedToD)
     {
         _mode = Mode.BallInHand;
+        _placementInD = restrictedToD;
         SetMouseCaptured(false);
 
-        _placement = Racks.HeadSpot(_table);
+        _placement = restrictedToD
+            ? new CoreVec2(_table.Snooker!.BaulkX - 0.15, 0.0)
+            : Racks.HeadSpot(_table);
         while (Occupied(_placement))
             _placement = new CoreVec2(_placement.X + 2.5 * _table.Physics.R, _placement.Y);
         _placementValid = true;
@@ -320,7 +367,7 @@ public partial class MatchController : Node3D
             }
         }
 
-        _placementValid = !Occupied(_placement);
+        _placementValid = !Occupied(_placement) && (!_placementInD || InsideD(_placement));
 
         foreach (var v in _views)
         {
@@ -328,10 +375,15 @@ public partial class MatchController : Node3D
             {
                 v.Visible = true;
                 v.Position = SimWorld.ToWorld(_placement, r);
-                ((StandardMaterial3D)v.MaterialOverride).AlbedoColor =
-                    _placementValid ? new Color(0.95f, 0.93f, 0.88f) : new Color(0.9f, 0.25f, 0.2f);
+                v.SetBaseColor(_placementValid ? new Color(0.95f, 0.93f, 0.88f) : new Color(0.9f, 0.25f, 0.2f));
             }
         }
+    }
+
+    private bool InsideD(CoreVec2 pos)
+    {
+        var d = _table.Snooker!;
+        return pos.X <= d.BaulkX + 1e-9 && (pos - d.DCenter).Length <= d.DRadiusValue + 1e-9;
     }
 
     private void ConfirmPlacement()
@@ -340,7 +392,7 @@ public partial class MatchController : Node3D
         cue = BallState.AtRest(0, _placement);
         foreach (var v in _views)
             if (v.BallId == 0)
-                ((StandardMaterial3D)v.MaterialOverride).AlbedoColor = new Color(0.95f, 0.93f, 0.88f);
+                v.SetBaseColor(new Color(0.95f, 0.93f, 0.88f));
         _mode = Mode.Aiming;
         SnapViews();
     }
@@ -545,20 +597,35 @@ public partial class MatchController : Node3D
     {
         _powerFill.AnchorRight = _power;
 
-        string GroupName(int p) => _game.GroupOf(p) switch
+        string players;
+        bool over;
+        if (_gameType == GameType.EightBall)
         {
-            BallGroup.Solids => "solids",
-            BallGroup.Stripes => "stripes",
-            _ => "?",
-        };
-        var players = _game.OpenTable
-            ? $"P1 vs P2 — open table — Player {_game.CurrentPlayer + 1}'s turn"
-            : $"P1 ({GroupName(0)}) vs P2 ({GroupName(1)}) — Player {_game.CurrentPlayer + 1}'s turn";
+            string GroupName(int p) => _game.GroupOf(p) switch
+            {
+                BallGroup.Solids => "solids",
+                BallGroup.Stripes => "stripes",
+                _ => "?",
+            };
+            players = _game.OpenTable
+                ? $"8-BALL — open table — Player {_game.CurrentPlayer + 1}'s turn"
+                : $"8-BALL — P1 ({GroupName(0)}) vs P2 ({GroupName(1)}) — Player {_game.CurrentPlayer + 1}'s turn";
+            over = _game.GameOver;
+        }
+        else
+        {
+            var g = _snookerGame;
+            var target = g.ColorsPhase
+                ? $"on the {SnookerRules.ColorName(g.NextColorOn)}"
+                : g.ColorBallOn ? "on a color" : "on a red";
+            players = $"SNOOKER — P1 {g.Scores[0]} : {g.Scores[1]} P2 — Player {g.CurrentPlayer + 1} {target}";
+            over = g.FrameOver;
+        }
 
         var status = _mode switch
         {
-            _ when _game.GameOver => $"GAME OVER — {_message}   [R] next rack",
-            Mode.Aiming => $"{_message}   |   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack",
+            _ when over => $"GAME OVER — {_message}   [R] next rack   [G] switch game",
+            Mode.Aiming => $"{_message}   |   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack  [G] switch game",
             Mode.BallInHand => $"{_message} — move the mouse to place the cue ball, click to confirm",
             Mode.Striking or Mode.Simulating => "STRIKE",
             _ => "...",
