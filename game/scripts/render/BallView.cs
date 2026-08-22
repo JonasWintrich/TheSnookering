@@ -54,10 +54,11 @@ public partial class BallView : MeshInstance3D
         var material = new StandardMaterial3D
         {
             AlbedoColor = texturePath is null ? color : Colors.White,
-            Roughness = 0.14f,
+            Roughness = 0.19f,
+            MetallicSpecular = 0.32f,
             ClearcoatEnabled = true,
-            Clearcoat = 1.0f,
-            ClearcoatRoughness = 0.03f,
+            Clearcoat = 0.45f,
+            ClearcoatRoughness = 0.09f,
         };
         if (texturePath is not null)
             material.AlbedoTexture = GD.Load<Texture2D>(texturePath);

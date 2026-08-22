@@ -132,9 +132,16 @@ public static class TableBuilder
             arcIdx++;
         }
 
-        // ---- wood frame: four rails around the cushions ------------------------
+        // ---- wood frame: rails split at every pocket (real tables interrupt the
+        // rail with a leather pocket casting; a continuous box through the corners
+        // is what makes gray-box pockets look wrong).
         var innerL = hl + CushionBack;
         var innerW = hw + CushionBack;
+        var frameH = 0.10f;
+        var frameY = FrameTop - frameH / 2f;
+        const float cornerTrim = 0.10f; // rails stop short of the corners
+        var sideGap = spec.Pockets.Count > 4 ? 0.10f : 0.105f; // gap at the side pockets
+
         void Rail(string name, Vector3 size, Vector3 pos) => root.AddChild(new MeshInstance3D
         {
             Name = name,
@@ -142,12 +149,20 @@ public static class TableBuilder
             Position = pos,
             MaterialOverride = wood,
         });
-        var frameH = 0.10f;
-        var frameY = FrameTop - frameH / 2f;
-        Rail("RailN", new Vector3(2f * (innerL + RailWidth), frameH, RailWidth), new Vector3(0f, frameY, -(innerW + RailWidth / 2f)));
-        Rail("RailS", new Vector3(2f * (innerL + RailWidth), frameH, RailWidth), new Vector3(0f, frameY, innerW + RailWidth / 2f));
-        Rail("RailE", new Vector3(RailWidth, frameH, 2f * innerW), new Vector3(innerL + RailWidth / 2f, frameY, 0f));
-        Rail("RailW", new Vector3(RailWidth, frameH, 2f * innerW), new Vector3(-(innerL + RailWidth / 2f), frameY, 0f));
+
+        var longSegLen = innerL - cornerTrim - sideGap;
+        foreach (var sz in new[] { 1f, -1f })
+        {
+            var z = sz * (innerW + RailWidth / 2f);
+            foreach (var sx in new[] { 1f, -1f })
+            {
+                var xc = sx * (sideGap + longSegLen / 2f);
+                Rail($"Rail{sz}{sx}", new Vector3(longSegLen, frameH, RailWidth), new Vector3(xc, frameY, z));
+            }
+        }
+        var shortSegLen = 2f * (innerW - cornerTrim);
+        Rail("RailE", new Vector3(RailWidth, frameH, shortSegLen), new Vector3(innerL + RailWidth / 2f, frameY, 0f));
+        Rail("RailW", new Vector3(RailWidth, frameH, shortSegLen), new Vector3(-(innerL + RailWidth / 2f), frameY, 0f));
 
         // ---- skirt + legs down to the floor -------------------------------------
         var skirtH = 0.16f;
@@ -180,32 +195,41 @@ public static class TableBuilder
             }
         }
 
-        // ---- pockets: hole disc + leather ring ------------------------------------
+        // ---- pockets: leather casting cup in the rail gap + unshaded black hole ----
+        pocketHole.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+        pocketHole.AlbedoColor = new Color(0.004f, 0.004f, 0.005f);
         foreach (var pocket in spec.Pockets)
         {
-            var center = SimWorld.ToWorld(pocket.FallCenter, 0.003f);
+            var fall = SimWorld.ToWorld(pocket.FallCenter);
+            var cupR = (float)pocket.FallRadius + 0.026f;
+
+            // Leather cup: a ring wall standing in the rail gap around the drop.
+            root.AddChild(new MeshInstance3D
+            {
+                Name = $"PocketCup{pocket.Id}",
+                Mesh = new CylinderMesh
+                {
+                    TopRadius = cupR,
+                    BottomRadius = cupR * 0.94f,
+                    Height = frameH,
+                    RadialSegments = 24,
+                },
+                Position = fall + new Vector3(0f, FrameTop - frameH / 2f - 0.012f, 0f),
+                MaterialOverride = leather,
+            });
+
+            // The hole: pitch-black unshaded disc slightly above the cup's top face.
             root.AddChild(new MeshInstance3D
             {
                 Name = $"Pocket{pocket.Id}",
                 Mesh = new CylinderMesh
                 {
-                    TopRadius = (float)pocket.FallRadius + 0.008f,
-                    BottomRadius = (float)pocket.FallRadius + 0.008f,
-                    Height = 0.005f,
+                    TopRadius = (float)pocket.FallRadius + 0.006f,
+                    BottomRadius = (float)pocket.FallRadius + 0.006f,
+                    Height = 0.004f,
                 },
-                Position = center,
+                Position = fall + new Vector3(0f, FrameTop - 0.010f, 0f),
                 MaterialOverride = pocketHole,
-            });
-            root.AddChild(new MeshInstance3D
-            {
-                Name = $"PocketRing{pocket.Id}",
-                Mesh = new TorusMesh
-                {
-                    InnerRadius = (float)pocket.FallRadius + 0.006f,
-                    OuterRadius = (float)pocket.FallRadius + 0.024f,
-                },
-                Position = center + new Vector3(0f, 0.012f, 0f),
-                MaterialOverride = leather,
             });
         }
 
