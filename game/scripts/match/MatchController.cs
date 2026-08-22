@@ -16,7 +16,7 @@ namespace Snookering.Game.Match;
 /// </summary>
 public partial class MatchController : Node3D
 {
-    private enum Mode { Aiming, Playback }
+    private enum Mode { Aiming, Simulating, Playback }
 
     private TableSpec _table = null!;
     private TableState _state = null!;
@@ -40,7 +40,8 @@ public partial class MatchController : Node3D
     private float _power;
     private bool _charging;
 
-    // Playback state.
+    // Simulation/playback state. The sim runs on a worker thread — never block the UI.
+    private System.Threading.Tasks.Task<ShotResult>? _simTask;
     private ShotResult? _result;
     private double _playTime;
 
@@ -90,8 +91,12 @@ public partial class MatchController : Node3D
         switch (@event)
         {
             case InputEventMouseButton mb:
-                if (mb.ButtonIndex == MouseButton.Right)
+                if (mb.ButtonIndex is MouseButton.Right or MouseButton.Left)
+                {
                     _orbiting = mb.Pressed;
+                    // Capture the mouse while dragging: smooth relative motion, no cursor drift.
+                    Input.MouseMode = _orbiting ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+                }
                 else if (mb.ButtonIndex == MouseButton.WheelUp)
                     _dist = Mathf.Clamp(_dist * 0.92f, 0.35f, 3.5f);
                 else if (mb.ButtonIndex == MouseButton.WheelDown)
@@ -174,9 +179,10 @@ public partial class MatchController : Node3D
             ElevationCentiDeg = 0,
         };
 
-        _result = Simulator.Run(_state, shot, _table);
-        _playTime = 0.0;
-        _mode = Mode.Playback;
+        var state = _state;
+        var table = _table;
+        _simTask = System.Threading.Tasks.Task.Run(() => Simulator.Run(state, shot, table));
+        _mode = Mode.Simulating;
         _power = 0f;
     }
 
@@ -219,6 +225,22 @@ public partial class MatchController : Node3D
     {
         if (_charging)
             _power = Mathf.PingPong((float)(_power + delta * 0.9), 1f);
+
+        if (_mode == Mode.Simulating && _simTask is not null && _simTask.IsCompleted)
+        {
+            if (_simTask.IsCompletedSuccessfully)
+            {
+                _result = _simTask.Result;
+                _playTime = 0.0;
+                _mode = Mode.Playback;
+            }
+            else
+            {
+                GD.PrintErr($"[match] simulation failed: {_simTask.Exception?.GetBaseException().Message}");
+                _mode = Mode.Aiming;
+            }
+            _simTask = null;
+        }
 
         if (_mode == Mode.Playback && _result is not null)
         {
@@ -325,7 +347,7 @@ public partial class MatchController : Node3D
         _info = new Label
         {
             Position = new Vector2(16, 12),
-            Theme = null,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         _info.AddThemeColorOverride("font_color", Colors.White);
         hud.AddChild(_info);
@@ -339,6 +361,7 @@ public partial class MatchController : Node3D
             AnchorBottom = 1f,
             OffsetTop = -36,
             OffsetBottom = -16,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         hud.AddChild(barBack);
 
@@ -347,6 +370,7 @@ public partial class MatchController : Node3D
             Color = new Color(0.95f, 0.55f, 0.1f),
             AnchorRight = 0f,
             AnchorBottom = 1f,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         barBack.AddChild(_powerFill);
     }
@@ -354,8 +378,11 @@ public partial class MatchController : Node3D
     private void UpdateHud()
     {
         _powerFill.AnchorRight = _power;
-        _info.Text = _mode == Mode.Aiming
-            ? $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [RMB] orbit  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack"
-            : "SHOT ...";
+        _info.Text = _mode switch
+        {
+            Mode.Aiming => $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [drag] orbit  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack",
+            Mode.Simulating => "SIMULATING ...",
+            _ => "SHOT ...",
+        };
     }
 }

@@ -85,7 +85,17 @@ public static class Simulator
             if (toi > remaining + step)
                 break; // no event within the tick — fully integrated
 
-            Resolve(balls, p, ev, tickStart + (Dt - remaining), events);
+            var progressed = Resolve(balls, p, ev, tickStart + (Dt - remaining), events);
+
+            // Zero-progress guard: a zero-time event that applied no impulse (a contact
+            // that stopped approaching) would be re-selected forever. Consume the rest
+            // of the tick with plain motion instead; the situation changes next tick.
+            if (!progressed && step <= 0.0)
+            {
+                for (var i = 0; i < balls.Length; i++)
+                    BallMotion.Integrate(ref balls[i], p, remaining);
+                break;
+            }
 
             if (++guard >= MaxEventsPerTick)
                 break; // pathological cluster; stop resolving this tick, motion continues next tick
@@ -169,23 +179,26 @@ public static class Simulator
         return best;
     }
 
-    private static void Resolve(BallState[] balls, PhysicsParams p, in PendingEvent ev, double time, List<SimEvent> events)
+    /// <summary>Returns true when the event actually changed state (impulse applied / ball pocketed).</summary>
+    private static bool Resolve(BallState[] balls, PhysicsParams p, in PendingEvent ev, double time, List<SimEvent> events)
     {
         switch (ev.Type)
         {
             case SimEventType.BallBall:
             {
                 var speed = Collisions.ResolveBallBall(ref balls[ev.IndexA], ref balls[ev.IndexB], p);
-                if (speed > 0.0)
-                    events.Add(new SimEvent(time, SimEventType.BallBall, balls[ev.IndexA].Id, balls[ev.IndexB].Id, -1, speed));
-                break;
+                if (speed <= 0.0)
+                    return false;
+                events.Add(new SimEvent(time, SimEventType.BallBall, balls[ev.IndexA].Id, balls[ev.IndexB].Id, -1, speed));
+                return true;
             }
             case SimEventType.Cushion:
             {
                 var speed = Collisions.ResolveCushion(ref balls[ev.IndexA], ev.Normal, p);
-                if (speed > 0.0)
-                    events.Add(new SimEvent(time, SimEventType.Cushion, balls[ev.IndexA].Id, balls[ev.IndexA].Id, ev.FeatureId, speed));
-                break;
+                if (speed <= 0.0)
+                    return false;
+                events.Add(new SimEvent(time, SimEventType.Cushion, balls[ev.IndexA].Id, balls[ev.IndexA].Id, ev.FeatureId, speed));
+                return true;
             }
             case SimEventType.Pocketed:
             {
@@ -196,8 +209,10 @@ public static class Simulator
                 ball.AngVel = Vec3.Zero;
                 ball.State = MotionState.Stationary;
                 events.Add(new SimEvent(time, SimEventType.Pocketed, ball.Id, ball.Id, ev.FeatureId, speed));
-                break;
+                return true;
             }
+            default:
+                return false;
         }
     }
 
