@@ -95,8 +95,16 @@ public partial class MatchController : Node3D
         var args = OS.GetCmdlineUserArgs();
         var startType = GameType.EightBall;
         for (var i = 0; i < args.Length; i++)
+        {
             if (args[i] == "--game" && i + 1 < args.Length && args[i + 1] == "snooker")
                 startType = GameType.Snooker;
+            if (args[i] == "--view" && i + 1 < args.Length && args[i + 1] == "top")
+            {
+                _forceTableView = true;
+                _pitch = 1.45f;
+                _dist = 3.4f;
+            }
+        }
 
         StartRack(startType);
         UpdateCamera(0f);
@@ -492,7 +500,10 @@ public partial class MatchController : Node3D
         return Vector3.Zero;
     }
 
-    private bool InAimView => _mode is Mode.Aiming or Mode.Striking;
+    /// <summary>CLI: --view top forces the table orbit view (debug screenshots).</summary>
+    private bool _forceTableView;
+
+    private bool InAimView => !_forceTableView && _mode is Mode.Aiming or Mode.Striking;
 
     private void UpdateCamera(float dt)
     {
