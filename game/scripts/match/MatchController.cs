@@ -1,6 +1,7 @@
 using System;
 using Godot;
 using Snookering.Core.Physics;
+using Snookering.Core.Rules;
 using Snookering.Core.Tables;
 using Snookering.Game.Render;
 using CoreVec2 = Snookering.Core.Mathematics.Vec2;
@@ -17,7 +18,7 @@ namespace Snookering.Game.Match;
 /// </summary>
 public partial class MatchController : Node3D
 {
-    private enum Mode { Aiming, Striking, Simulating, Playback }
+    private enum Mode { Aiming, Striking, Simulating, Playback, BallInHand }
 
     private TableSpec _table = null!;
     private TableState _state = null!;
@@ -59,6 +60,16 @@ public partial class MatchController : Node3D
     private System.Threading.Tasks.Task<ShotResult>? _simTask;
     private ShotResult? _result;
     private double _playTime;
+    private TableState? _preShotState;
+
+    // Rules.
+    private readonly EightBallRules _rules = new();
+    private EightBallGame _game = new();
+    private string _message = "Player 1 to break";
+
+    // Ball-in-hand placement.
+    private CoreVec2 _placement;
+    private bool _placementValid;
 
     public override void _Ready()
     {
@@ -110,8 +121,16 @@ public partial class MatchController : Node3D
             case InputEventMouseButton mb:
                 if (mb.ButtonIndex == MouseButton.Left)
                 {
-                    _aiming = mb.Pressed && _mode == Mode.Aiming;
-                    SetMouseCaptured(mb.Pressed && _aiming);
+                    if (_mode == Mode.BallInHand)
+                    {
+                        if (mb.Pressed && _placementValid)
+                            ConfirmPlacement();
+                    }
+                    else
+                    {
+                        _aiming = mb.Pressed && _mode == Mode.Aiming;
+                        SetMouseCaptured(mb.Pressed && _aiming);
+                    }
                 }
                 else if (mb.ButtonIndex == MouseButton.Right)
                 {
@@ -175,7 +194,7 @@ public partial class MatchController : Node3D
         const float step = 0.05f;
         switch (code)
         {
-            case Key.Space when _mode == Mode.Aiming:
+            case Key.Space when _mode == Mode.Aiming && !_game.GameOver:
                 _charging = true;
                 _power = 0f;
                 break;
@@ -192,7 +211,10 @@ public partial class MatchController : Node3D
                 SetSpin(_spinSide, _spinVert - step);
                 break;
             case Key.R:
+                var breaker = _game.GameOver && _game.Winner >= 0 ? _game.Winner : 0; // winner breaks
                 _state = Racks.EightBall(_table);
+                _game = new EightBallGame { CurrentPlayer = breaker };
+                _message = $"Player {breaker + 1} to break";
                 _result = null;
                 _simTask = null;
                 _mode = Mode.Aiming;
@@ -230,6 +252,7 @@ public partial class MatchController : Node3D
             ElevationCentiDeg = 0,
         };
 
+        _preShotState = _state;
         var state = _state;
         var table = _table;
         _simTask = System.Threading.Tasks.Task.Run(() => Simulator.Run(state, shot, table));
@@ -243,18 +266,82 @@ public partial class MatchController : Node3D
     private void FinishPlayback()
     {
         _state = _result!.FinalState;
+        var outcome = _rules.Apply(_game, _preShotState!, _result);
+        GD.Print($"[rules] shot adjudicated: {outcome.Message} (foul={outcome.Foul}, events={_result.Events.Count})");
+        _message = outcome.Message;
         _result = null;
-        _mode = Mode.Aiming;
 
-        // Gray-box ball-in-hand: a pocketed cue ball returns to the head spot (rules arrive in M2).
-        ref var cue = ref _state.Ball(0);
-        if (!cue.OnTable)
+        if (outcome.GameOver)
         {
-            var spot = Racks.HeadSpot(_table);
-            while (Occupied(spot))
-                spot = new CoreVec2(spot.X + 2.5 * _table.Physics.R, spot.Y);
-            cue = BallState.AtRest(0, spot);
+            // Leave the table as it lies; R starts the next rack (winner breaks).
+            _mode = Mode.Aiming;
         }
+        else if (outcome.BallInHand)
+        {
+            EnterBallInHand();
+        }
+        else
+        {
+            _mode = Mode.Aiming;
+        }
+        SnapViews();
+    }
+
+    // ------------------------------------------------------------------ ball in hand
+
+    private void EnterBallInHand()
+    {
+        _mode = Mode.BallInHand;
+        SetMouseCaptured(false);
+
+        _placement = Racks.HeadSpot(_table);
+        while (Occupied(_placement))
+            _placement = new CoreVec2(_placement.X + 2.5 * _table.Physics.R, _placement.Y);
+        _placementValid = true;
+    }
+
+    private void UpdatePlacement()
+    {
+        var mouse = GetViewport().GetMousePosition();
+        var from = _camera.ProjectRayOrigin(mouse);
+        var dir = _camera.ProjectRayNormal(mouse);
+        var r = (float)_table.Physics.R;
+
+        if (Mathf.Abs(dir.Y) > 1e-4f)
+        {
+            var t = (r - from.Y) / dir.Y;
+            if (t > 0f)
+            {
+                var hit = from + dir * t;
+                var sim = SimWorld.ToSim(hit);
+                _placement = new CoreVec2(
+                    Math.Clamp(sim.X, -_table.HalfLength + _table.Physics.R, _table.HalfLength - _table.Physics.R),
+                    Math.Clamp(sim.Y, -_table.HalfWidth + _table.Physics.R, _table.HalfWidth - _table.Physics.R));
+            }
+        }
+
+        _placementValid = !Occupied(_placement);
+
+        foreach (var v in _views)
+        {
+            if (v.BallId == 0)
+            {
+                v.Visible = true;
+                v.Position = SimWorld.ToWorld(_placement, r);
+                ((StandardMaterial3D)v.MaterialOverride).AlbedoColor =
+                    _placementValid ? new Color(0.95f, 0.93f, 0.88f) : new Color(0.9f, 0.25f, 0.2f);
+            }
+        }
+    }
+
+    private void ConfirmPlacement()
+    {
+        ref var cue = ref _state.Ball(0);
+        cue = BallState.AtRest(0, _placement);
+        foreach (var v in _views)
+            if (v.BallId == 0)
+                ((StandardMaterial3D)v.MaterialOverride).AlbedoColor = new Color(0.95f, 0.93f, 0.88f);
+        _mode = Mode.Aiming;
         SnapViews();
     }
 
@@ -301,6 +388,10 @@ public partial class MatchController : Node3D
                 ApplyPlayback((float)delta);
                 if (_playTime >= _result.Duration + 0.3)
                     FinishPlayback();
+                break;
+
+            case Mode.BallInHand:
+                UpdatePlacement();
                 break;
         }
 
@@ -453,11 +544,26 @@ public partial class MatchController : Node3D
     private void UpdateHud()
     {
         _powerFill.AnchorRight = _power;
-        _info.Text = _mode switch
+
+        string GroupName(int p) => _game.GroupOf(p) switch
         {
-            Mode.Aiming => $"AIM   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [drag up/down] camera height  [wheel] closer/further  [arrows] spin  [Space] power  [R] re-rack",
-            Mode.Striking or Mode.Simulating => "STRIKE",
-            _ => "SHOT ...",
+            BallGroup.Solids => "solids",
+            BallGroup.Stripes => "stripes",
+            _ => "?",
         };
+        var players = _game.OpenTable
+            ? $"P1 vs P2 — open table — Player {_game.CurrentPlayer + 1}'s turn"
+            : $"P1 ({GroupName(0)}) vs P2 ({GroupName(1)}) — Player {_game.CurrentPlayer + 1}'s turn";
+
+        var status = _mode switch
+        {
+            _ when _game.GameOver => $"GAME OVER — {_message}   [R] next rack",
+            Mode.Aiming => $"{_message}   |   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack",
+            Mode.BallInHand => $"{_message} — move the mouse to place the cue ball, click to confirm",
+            Mode.Striking or Mode.Simulating => "STRIKE",
+            _ => "...",
+        };
+
+        _info.Text = $"{players}\n{status}";
     }
 }
