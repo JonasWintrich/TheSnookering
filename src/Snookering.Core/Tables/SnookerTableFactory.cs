@@ -17,16 +17,24 @@ public static class SnookerTableFactory
 
     private const double CornerMouth = 0.086;
     private const double SideMouth = 0.103;
-    private const double CornerCutback = CornerMouth * 0.7071067811865476;
-    private const double SideCutback = SideMouth / 2.0;
 
-    private const double CornerJawRadius = 0.050;
-    private const double SideJawRadius = 0.035;
+    private const double CornerJawRadius = 0.012;
+    private const double SideJawRadius = 0.012;
 
-    private const double CornerFallOffset = 0.042;
-    private const double CornerFallRadius = 0.046;
-    private const double SideFallOffset = 0.031;
-    private const double SideFallRadius = 0.043;
+    // The mouth is the SURFACE-to-surface gap between the two jaw arcs, not the
+    // nose-to-nose distance. With arcs tangent to the rail faces (centers one jaw
+    // radius behind them):
+    //   corner: |C1C2| = √2·(cutback + r), gap = |C1C2| − 2r  ⇒  cutback = (mouth + (2−√2)·r)/√2
+    //   side:   |C1C2| = 2·cutback,        gap = 2·cutback − 2r ⇒ cutback = mouth/2 + r
+    // A 52.5 mm ball through an 86 mm mouth leaves 33.5 mm of center clearance —
+    // tight like the real game, but honest.
+    private const double CornerCutback = (CornerMouth + 0.5857864376269049 * CornerJawRadius) * 0.7071067811865476;
+    private const double SideCutback = SideMouth / 2.0 + SideJawRadius;
+
+    private const double CornerFallOffset = 0.030;
+    private const double CornerFallRadius = 0.048;
+    private const double SideFallOffset = 0.028;
+    private const double SideFallRadius = 0.045;
 
     // Baulk line 737 mm from the baulk cushion; D radius 292 mm; black spot 324 mm off the top cushion.
     public const double BaulkLineX = -HalfLength + 0.737;
