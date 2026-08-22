@@ -78,6 +78,8 @@ public partial class MatchController : Node3D
     private bool _placementInD;
 
     private Node3D? _tableNode;
+    private AudioManager _audio = null!;
+    private int _nextEventIdx;
 
     public override void _Ready()
     {
@@ -87,6 +89,9 @@ public partial class MatchController : Node3D
 
         _cue = CueView.Create();
         AddChild(_cue);
+
+        _audio = new AudioManager { Name = "Audio" };
+        AddChild(_audio);
 
         BuildHud();
 
@@ -436,6 +441,7 @@ public partial class MatchController : Node3D
                 {
                     _result = _simTask.Result;
                     _playTime = 0.0;
+                    _nextEventIdx = 0;
                     _mode = Mode.Playback;
                 }
                 else
@@ -449,6 +455,7 @@ public partial class MatchController : Node3D
             case Mode.Playback when _result is not null:
                 _playTime += delta;
                 ApplyPlayback((float)delta);
+                PumpAudioEvents();
                 if (_playTime >= _result.Duration + 0.3)
                     FinishPlayback();
                 break;
@@ -483,6 +490,29 @@ public partial class MatchController : Node3D
                 a.AngVel,
                 a.OnTable && b.OnTable);
             _views[i].Apply(in lerped, dt);
+        }
+    }
+
+    /// <summary>Fire the sound of every sim event whose time playback has just passed.</summary>
+    private void PumpAudioEvents()
+    {
+        var events = _result!.Events;
+        while (_nextEventIdx < events.Count && events[_nextEventIdx].Time <= _playTime)
+        {
+            var e = events[_nextEventIdx++];
+            if (e.Type is SimEventType.RestReached)
+                continue;
+
+            var pos = Vector3.Zero;
+            foreach (var v in _views)
+            {
+                if (v.BallId == e.BallA)
+                {
+                    pos = v.Position;
+                    break;
+                }
+            }
+            _audio.PlayEvent(in e, pos);
         }
     }
 
