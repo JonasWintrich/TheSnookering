@@ -41,7 +41,7 @@ public partial class MatchController : Node3D
     //  - Playback: free orbit around the table so the whole shot is visible.
     private static readonly Vector3 TableFocus = new(0f, 0.1f, 0f);
     private float _yaw = -Mathf.Pi / 2f; // playback orbit: behind the baulk end
-    private float _pitch = 0.85f;
+    private float _pitch = 0.55f; // shot view stays low so the lamps are not in the way
     private float _dist = 2.7f;
     private float _aimDist = 0.6f;
     private float _aimPitch = 0.30f; // low over the cue

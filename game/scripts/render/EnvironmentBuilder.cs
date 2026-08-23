@@ -11,7 +11,7 @@ namespace Snookering.Game.Render;
 public static class EnvironmentBuilder
 {
     public const float FloorY = -0.82f;
-    private const float LampHeight = 1.05f;
+    private const float LampHeight = 1.22f; // hung a bit higher: clears the lowered playback view
 
     public static Node3D Build(float tableHalfLength, float tableHalfWidth)
     {
