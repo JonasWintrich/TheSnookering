@@ -306,10 +306,43 @@ public static class TableBuilder
         var cushion = (StandardMaterial3D)cloth.Duplicate();
         cushion.AlbedoColor = new Color(0.04f, 0.33f, 0.135f);
 
+        var lineCloth = (StandardMaterial3D)cloth.Duplicate();
+        lineCloth.AlbedoColor = new Color(0.55f, 0.6f, 0.5f);
+
         return new System.Collections.Generic.Dictionary<string, Material>
         {
+            // Generated hero tables (make_table.py).
             ["Cloth"] = cloth,
             ["CushionCloth"] = cushion,
+            // OpenGameArt tournament table (import_table.py, CC-BY BrightRetro).
+            ["Beize"] = cloth,
+            ["BeizeSides"] = cushion,
+            ["BeizeCushions"] = cushion,
+            ["DlinePool"] = lineCloth,
+            ["TableWood"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.15f, 0.075f, 0.038f),
+                Roughness = 0.32f,
+                ClearcoatEnabled = true,
+                Clearcoat = 0.35f,
+                ClearcoatRoughness = 0.2f,
+            },
+            ["MetalFrame"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.18f, 0.16f, 0.14f),
+                Metallic = 0.8f,
+                Roughness = 0.45f,
+            },
+            ["Black"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.03f, 0.03f, 0.032f),
+                Roughness = 0.7f,
+            },
+            ["PocketBlack"] = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.015f, 0.015f, 0.018f),
+                Roughness = 0.9f,
+            },
             ["Wood"] = new StandardMaterial3D
             {
                 AlbedoColor = new Color(0.16f, 0.08f, 0.04f),
