@@ -281,6 +281,14 @@ public static class EnvironmentBuilder
         Prop("calathea_orbifolia_01", new Vector3(5.3f, FloorY, 4.2f), 0f, 1.2f);
         var shelf = Prop("Shelf_01", new Vector3(-5.85f, FloorY + 1.45f, -2.2f), 90f);
 
+        // ---- ambient people (Quaternius animated characters, CC0):
+        // one leaning at the bar, one sitting in the reading corner. They idle,
+        // fidget occasionally, and clap on good pots (see NpcView).
+        root.AddChild(NpcView.Create("res://assets/models/npc/male_suit.glb",
+            new Vector3(0.9f, FloorY, -3.45f), 15f, basePrefix: "Idle", scale: 0.42f));
+        root.AddChild(NpcView.Create("res://assets/models/npc/female_casual.glb",
+            new Vector3(-4.3f, FloorY + 0.16f, 3.3f), 155f, basePrefix: "Sitting", scale: 0.42f));
+
         // ---- cue rack on the west wall
         var rack = new Node3D { Name = "CueRack", Position = new Vector3(-5.9f, 0f, 1.8f) };
         rack.AddChild(new MeshInstance3D

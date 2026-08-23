@@ -632,6 +632,10 @@ public partial class MatchController : Node3D
             if (e.Type is SimEventType.RestReached)
                 continue;
 
+            if (e.Type is SimEventType.Pocketed && e.BallA != 0)
+                foreach (var npc in GetTree().GetNodesInGroup("npcs"))
+                    (npc as NpcView)?.React();
+
             var pos = Vector3.Zero;
             foreach (var v in _views)
             {
