@@ -246,6 +246,29 @@ public sealed class SnookerRules
         ball = BallState.AtRest(colorId, target);
     }
 
+    /// <summary>Balls the current player may legally strike first / pot (consumed by UI and AI).</summary>
+    public static List<byte> LegalTargets(SnookerGame game, TableState state)
+    {
+        var targets = new List<byte>();
+        if (game.ColorsPhase)
+        {
+            targets.Add(game.NextColorOn);
+        }
+        else if (game.ColorBallOn)
+        {
+            for (var id = SnookerBalls.Yellow; id <= SnookerBalls.Black; id++)
+                if (state.Balls.Any(b => b.Id == id && b.OnTable))
+                    targets.Add(id);
+        }
+        else
+        {
+            foreach (var b in state.Balls)
+                if (b.OnTable && SnookerBalls.IsRed(b.Id))
+                    targets.Add(b.Id);
+        }
+        return targets;
+    }
+
     public static string ColorName(byte id) => id switch
     {
         SnookerBalls.Yellow => "yellow",

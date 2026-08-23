@@ -52,6 +52,25 @@ public sealed class EightBallRules
     private static bool IsSolid(byte id) => id >= 1 && id <= 7;
     private static bool IsStripe(byte id) => id >= 9 && id <= 15;
 
+    /// <summary>Balls the current player may legally strike first / pot (consumed by UI and AI).</summary>
+    public static System.Collections.Generic.List<byte> LegalTargets(EightBallGame game, TableState state)
+    {
+        var targets = new System.Collections.Generic.List<byte>();
+        var group = game.GroupOf(game.CurrentPlayer);
+
+        foreach (var b in state.Balls)
+        {
+            if (!b.OnTable || b.Id == 0 || b.Id == 8)
+                continue;
+            if (game.OpenTable || InGroup(b.Id, group))
+                targets.Add(b.Id);
+        }
+
+        if (targets.Count == 0 && !game.OpenTable)
+            targets.Add(8); // group cleared: the 8 is the ball on
+        return targets;
+    }
+
     private static bool InGroup(byte id, BallGroup g) =>
         g == BallGroup.Solids ? IsSolid(id) : g == BallGroup.Stripes && IsStripe(id);
 

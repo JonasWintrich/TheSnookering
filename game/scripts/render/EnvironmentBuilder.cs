@@ -31,30 +31,81 @@ public static class EnvironmentBuilder
             MaterialOverride = floorMat,
         });
 
-        // ---- walls: dark paneling, far enough to fall into the fog/dark
-        var wallMat = new StandardMaterial3D
+        // ---- rug under the table: anchors it visually and owns the light spill
+        root.AddChild(new MeshInstance3D
         {
-            AlbedoColor = new Color(0.10f, 0.085f, 0.07f),
-            Roughness = 0.85f,
-        };
-        void Wall(string name, Vector3 size, Vector3 pos) => root.AddChild(new MeshInstance3D
-        {
-            Name = name,
-            Mesh = new BoxMesh { Size = size },
-            Position = pos,
-            MaterialOverride = wallMat,
+            Name = "Rug",
+            Mesh = new BoxMesh { Size = new Vector3(2f * tableHalfLength + 2.2f, 0.012f, 2f * tableHalfWidth + 2.2f) },
+            Position = new Vector3(0f, FloorY + 0.006f, 0f),
+            MaterialOverride = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.22f, 0.06f, 0.05f),
+                Roughness = 1f,
+            },
         });
-        Wall("WallN", new Vector3(12f, 3.4f, 0.1f), new Vector3(0f, FloorY + 1.7f, -5f));
-        Wall("WallS", new Vector3(12f, 3.4f, 0.1f), new Vector3(0f, FloorY + 1.7f, 5f));
-        Wall("WallE", new Vector3(0.1f, 3.4f, 10f), new Vector3(6f, FloorY + 1.7f, 0f));
-        Wall("WallW", new Vector3(0.1f, 3.4f, 10f), new Vector3(-6f, FloorY + 1.7f, 0f));
+
+        // ---- walls: warm plaster above dark wainscot paneling
+        var plaster = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.30f, 0.24f, 0.18f),
+            Roughness = 0.92f,
+        };
+        var wainscot = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.11f, 0.06f, 0.035f),
+            Roughness = 0.45f,
+            ClearcoatEnabled = true,
+            Clearcoat = 0.3f,
+        };
+        const float wainscotH = 1.1f;
+        const float wallH = 3.4f;
+        void Wall(string name, bool alongX, float wallPos)
+        {
+            var length = alongX ? 12f : 10f;
+            var lower = new MeshInstance3D
+            {
+                Name = name + "Wainscot",
+                Mesh = new BoxMesh
+                {
+                    Size = alongX ? new Vector3(length, wainscotH, 0.12f) : new Vector3(0.12f, wainscotH, length),
+                },
+                Position = alongX
+                    ? new Vector3(0f, FloorY + wainscotH / 2f, wallPos)
+                    : new Vector3(wallPos, FloorY + wainscotH / 2f, 0f),
+                MaterialOverride = wainscot,
+            };
+            root.AddChild(lower);
+            var upper = new MeshInstance3D
+            {
+                Name = name,
+                Mesh = new BoxMesh
+                {
+                    Size = alongX ? new Vector3(length, wallH - wainscotH, 0.1f) : new Vector3(0.1f, wallH - wainscotH, length),
+                },
+                Position = alongX
+                    ? new Vector3(0f, FloorY + wainscotH + (wallH - wainscotH) / 2f, wallPos)
+                    : new Vector3(wallPos, FloorY + wainscotH + (wallH - wainscotH) / 2f, 0f),
+                MaterialOverride = plaster,
+            };
+            root.AddChild(upper);
+        }
+        Wall("WallN", true, -5f);
+        Wall("WallS", true, 5f);
+        Wall("WallE", false, 6f);
+        Wall("WallW", false, -6f);
         root.AddChild(new MeshInstance3D
         {
             Name = "Ceiling",
             Mesh = new BoxMesh { Size = new Vector3(12f, 0.1f, 10f) },
-            Position = new Vector3(0f, FloorY + 3.4f, 0f),
-            MaterialOverride = wallMat,
+            Position = new Vector3(0f, FloorY + wallH, 0f),
+            MaterialOverride = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.08f, 0.065f, 0.05f),
+                Roughness = 0.95f,
+            },
         });
+
+        BuildProps(root);
 
         // ---- pendant lamps over the table
         var lampCount = tableHalfLength > 1.5f ? 4 : 3;
@@ -76,6 +127,141 @@ public static class EnvironmentBuilder
         });
 
         return root;
+    }
+
+    /// <summary>Wall dressing: sconces (with their own dim lights), bar, art, cue rack.</summary>
+    private static void BuildProps(Node3D root)
+    {
+        var brass = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.55f, 0.42f, 0.18f),
+            Metallic = 0.9f,
+            Roughness = 0.35f,
+        };
+        var darkWood = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.10f, 0.055f, 0.03f),
+            Roughness = 0.4f,
+            ClearcoatEnabled = true,
+            Clearcoat = 0.3f,
+        };
+        var counterTop = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.05f, 0.04f, 0.035f),
+            Roughness = 0.2f,
+            ClearcoatEnabled = true,
+            Clearcoat = 0.8f,
+            ClearcoatRoughness = 0.1f,
+        };
+
+        // ---- wall sconces: warm glow strips that make the room READ in the dark
+        void Sconce(string name, Vector3 pos, float yawDeg)
+        {
+            var sconce = new Node3D { Name = name, Position = pos, RotationDegrees = new Vector3(0f, yawDeg, 0f) };
+            sconce.AddChild(new MeshInstance3D
+            {
+                Name = "Shade",
+                Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.075f, Height = 0.16f },
+                MaterialOverride = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(0.9f, 0.78f, 0.55f),
+                    EmissionEnabled = true,
+                    Emission = new Color(1f, 0.8f, 0.5f),
+                    EmissionEnergyMultiplier = 1.4f,
+                    Roughness = 0.8f,
+                },
+            });
+            sconce.AddChild(new OmniLight3D
+            {
+                Name = "Light",
+                LightColor = new Color(1f, 0.8f, 0.55f),
+                LightEnergy = 0.5f,
+                OmniRange = 2.6f,
+                OmniAttenuation = 1.6f,
+                ShadowEnabled = false,
+            });
+            root.AddChild(sconce);
+        }
+        Sconce("SconceN1", new Vector3(-3.2f, FloorY + 1.9f, -4.85f), 0f);
+        Sconce("SconceN2", new Vector3(3.2f, FloorY + 1.9f, -4.85f), 0f);
+        Sconce("SconceS1", new Vector3(-3.2f, FloorY + 1.9f, 4.85f), 0f);
+        Sconce("SconceS2", new Vector3(3.2f, FloorY + 1.9f, 4.85f), 0f);
+        Sconce("SconceE", new Vector3(5.85f, FloorY + 1.9f, 0f), 0f);
+        Sconce("SconceW", new Vector3(-5.85f, FloorY + 1.9f, 0f), 0f);
+
+        // ---- bar counter along the north wall
+        var bar = new Node3D { Name = "Bar", Position = new Vector3(0f, 0f, -4.35f) };
+        bar.AddChild(new MeshInstance3D
+        {
+            Name = "Body",
+            Mesh = new BoxMesh { Size = new Vector3(4.6f, 1.05f, 0.6f) },
+            Position = new Vector3(0f, FloorY + 0.525f, 0f),
+            MaterialOverride = darkWood,
+        });
+        bar.AddChild(new MeshInstance3D
+        {
+            Name = "Top",
+            Mesh = new BoxMesh { Size = new Vector3(4.8f, 0.05f, 0.75f) },
+            Position = new Vector3(0f, FloorY + 1.08f, 0f),
+            MaterialOverride = counterTop,
+        });
+        bar.AddChild(new MeshInstance3D
+        {
+            Name = "FootRail",
+            Mesh = new BoxMesh { Size = new Vector3(4.4f, 0.03f, 0.03f) },
+            Position = new Vector3(0f, FloorY + 0.16f, 0.34f),
+            MaterialOverride = brass,
+        });
+        root.AddChild(bar);
+
+        // ---- framed pictures on the south wall
+        var frameMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.05f, 0.03f), Roughness = 0.4f };
+        var artColors = new[]
+        {
+            new Color(0.25f, 0.16f, 0.08f),
+            new Color(0.12f, 0.16f, 0.14f),
+            new Color(0.2f, 0.1f, 0.09f),
+        };
+        for (var i = 0; i < 3; i++)
+        {
+            var x = -2.2f + 2.2f * i;
+            root.AddChild(new MeshInstance3D
+            {
+                Name = $"Frame{i}",
+                Mesh = new BoxMesh { Size = new Vector3(0.85f, 1.1f, 0.05f) },
+                Position = new Vector3(x, FloorY + 1.95f, 4.9f),
+                MaterialOverride = frameMat,
+            });
+            root.AddChild(new MeshInstance3D
+            {
+                Name = $"Art{i}",
+                Mesh = new BoxMesh { Size = new Vector3(0.7f, 0.95f, 0.02f) },
+                Position = new Vector3(x, FloorY + 1.95f, 4.87f),
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = artColors[i], Roughness = 0.9f },
+            });
+        }
+
+        // ---- cue rack on the west wall
+        var rack = new Node3D { Name = "CueRack", Position = new Vector3(-5.9f, 0f, 1.8f) };
+        rack.AddChild(new MeshInstance3D
+        {
+            Name = "Board",
+            Mesh = new BoxMesh { Size = new Vector3(0.06f, 1.7f, 0.7f) },
+            Position = new Vector3(0f, FloorY + 1.5f, 0f),
+            MaterialOverride = darkWood,
+        });
+        var cueWood = new StandardMaterial3D { AlbedoColor = new Color(0.6f, 0.45f, 0.28f), Roughness = 0.4f };
+        for (var i = 0; i < 4; i++)
+        {
+            rack.AddChild(new MeshInstance3D
+            {
+                Name = $"RackCue{i}",
+                Mesh = new CylinderMesh { TopRadius = 0.008f, BottomRadius = 0.013f, Height = 1.45f },
+                Position = new Vector3(0.05f, FloorY + 1.45f, -0.24f + 0.16f * i),
+                MaterialOverride = cueWood,
+            });
+        }
+        root.AddChild(rack);
     }
 
     /// <summary>Lamp meshes live on render layer 2 so the top-down camera can cull them.</summary>
