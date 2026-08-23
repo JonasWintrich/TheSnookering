@@ -17,6 +17,7 @@ import json
 import math
 import sys
 
+import bmesh
 import bpy
 
 # ----------------------------------------------------------------- constants
@@ -82,6 +83,14 @@ def add_mesh(name, verts, faces, mat):
     obj = bpy.data.objects.new(name, mesh)
     obj.data.materials.append(MATS[mat])
     bpy.context.collection.objects.link(obj)
+
+    # Winding depends on the sweep's handedness — recalc so every face points
+    # outward, otherwise half the cushions render inside-out (culled invisible).
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(obj.data)
+    bm.free()
     return obj
 
 
@@ -195,8 +204,11 @@ def build_table(spec, out_path):
         boolean(rail, cutter)
     bevel(rail, width=0.008, segments=2)
 
-    # Leather pocket castings: cylinder shell arc (mouth side cut away by a box
-    # aimed at the playfield) + a black hole disc at cloth level.
+    # Leather pockets: NOTHING stands above the cloth.
+    #  - liner: a full ring sunk BELOW deck (the visible dark wall inside the hole)
+    #  - collar: a flat 4 mm trim lying on the cloth edge, mouth side cut away
+    #    so entering balls never clip through it
+    #  - hole: black disc slightly below cloth level
     for p in pockets:
         is_side = abs(p["x"]) < 0.2
         if is_side:
@@ -205,19 +217,23 @@ def build_table(spec, out_path):
             ox = math.copysign(0.70710678, p["x"])
             oy = math.copysign(0.70710678, p["y"])
 
-        shell_r = p["r"] + 0.030
-        shell = add_cylinder(f"Casting{p['id']}", p["x"], p["y"], (RAIL_TOP + RAIL_BOTTOM) / 2,
-                             shell_r, RAIL_TOP - RAIL_BOTTOM, "Leather", verts=36)
-        hole = add_cylinder("cut", p["x"], p["y"], 0, shell_r - 0.012, 1.0, "Hole")
-        boolean(shell, hole)
-        # Cut away the playfield-facing side of the shell.
-        cut = add_box("cut", p["x"] - ox * (shell_r + 0.06), p["y"] - oy * (shell_r + 0.06), 0,
-                      2 * shell_r + 0.1, 2 * shell_r + 0.1, 1.2, "Hole")
+        liner_r = p["r"] + 0.014
+        liner = add_cylinder(f"Liner{p['id']}", p["x"], p["y"], -0.041, liner_r, 0.09, "Leather", verts=36)
+        cut = add_cylinder("cut", p["x"], p["y"], -0.041, liner_r - 0.010, 0.2, "Hole")
+        boolean(liner, cut)
+
+        collar_r = p["r"] + 0.024
+        collar = add_cylinder(f"Collar{p['id']}", p["x"], p["y"], 0.004, collar_r, 0.008, "Leather", verts=36)
+        cut = add_cylinder("cut", p["x"], p["y"], 0.004, p["r"] + 0.004, 0.2, "Hole")
+        boolean(collar, cut)
+        # Remove the playfield-facing side of the collar (open mouth).
+        cut = add_box("cut", p["x"] - ox * (collar_r + 0.055), p["y"] - oy * (collar_r + 0.055), 0.004,
+                      2 * collar_r + 0.1, 2 * collar_r + 0.1, 0.05, "Hole")
         cut.rotation_euler = (0, 0, math.atan2(oy, ox))
         bpy.ops.object.transform_apply(rotation=True)
-        boolean(shell, cut)
+        boolean(collar, cut)
 
-        add_cylinder(f"Hole{p['id']}", p["x"], p["y"], -0.004, p["r"] + 0.004, 0.006, "Hole", verts=36)
+        add_cylinder(f"Hole{p['id']}", p["x"], p["y"], -0.005, p["r"] + 0.006, 0.006, "Hole", verts=36)
 
     # Skirt + legs.
     add_box("SkirtN", 0, -(inner_w + RAIL_W - 0.02), RAIL_BOTTOM - SKIRT_H / 2, 2 * inner_l, 0.05, SKIRT_H, "DarkWood")
