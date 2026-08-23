@@ -81,6 +81,18 @@ public partial class MatchController : Node3D
     private AudioManager _audio = null!;
     private int _nextEventIdx;
 
+    // AI opponent (Player 2). 0 = human, 1..3 = Easy/Medium/Hard.
+    private int _aiLevel;
+    private System.Threading.Tasks.Task<Snookering.Core.Ai.AiShot>? _aiTask;
+    private ShotInput? _aiPending;
+    private float _aiThink;
+    private ulong _aiSeed = 0x5EED;
+
+    private int CurrentPlayer => _gameType == GameType.EightBall ? _game.CurrentPlayer : _snookerGame.CurrentPlayer;
+    private bool IsGameOver => _gameType == GameType.EightBall ? _game.GameOver : _snookerGame.FrameOver;
+    private bool AiTurn => _aiLevel > 0 && CurrentPlayer == 1 && !IsGameOver;
+    private Snookering.Core.Ai.AiDifficulty AiDifficulty => (Snookering.Core.Ai.AiDifficulty)(_aiLevel - 1);
+
     public override void _Ready()
     {
         _camera = new Camera3D { Name = "MatchCamera", Fov = 55f };
@@ -103,6 +115,8 @@ public partial class MatchController : Node3D
         {
             if (args[i] == "--game" && i + 1 < args.Length && args[i + 1] == "snooker")
                 startType = GameType.Snooker;
+            if (args[i] == "--ai" && i + 1 < args.Length)
+                _aiLevel = Math.Clamp(int.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture), 0, 3);
             if (args[i] == "--view" && i + 1 < args.Length && args[i + 1] == "top")
             {
                 _forceTableView = true;
@@ -147,6 +161,8 @@ public partial class MatchController : Node3D
             case InputEventMouseButton mb:
                 if (mb.ButtonIndex == MouseButton.Left)
                 {
+                    if (AiTurn)
+                        break; // spectating: the AI owns aiming and placement
                     if (_mode == Mode.BallInHand)
                     {
                         if (mb.Pressed && _placementValid)
@@ -220,7 +236,7 @@ public partial class MatchController : Node3D
         const float step = 0.05f;
         switch (code)
         {
-            case Key.Space when _mode == Mode.Aiming && !(_gameType == GameType.EightBall ? _game.GameOver : _snookerGame.FrameOver):
+            case Key.Space when _mode == Mode.Aiming && !IsGameOver && !AiTurn:
                 _charging = true;
                 _power = 0f;
                 break;
@@ -241,6 +257,11 @@ public partial class MatchController : Node3D
                 break;
             case Key.G when _mode is Mode.Aiming or Mode.BallInHand:
                 StartRack(_gameType == GameType.EightBall ? GameType.Snooker : GameType.EightBall);
+                break;
+            case Key.P:
+                _aiLevel = (_aiLevel + 1) % 4;
+                _aiTask = null;
+                _aiPending = null;
                 break;
         }
     }
@@ -316,16 +337,111 @@ public partial class MatchController : Node3D
             OffsetVert1e4 = (short)Math.Round(_spinVert * 1e4),
             ElevationCentiDeg = 0,
         };
+        FireInput(shot, _power);
+    }
 
+    /// <summary>Common firing path for human and AI shots.</summary>
+    private void FireInput(in ShotInput shot, float visualPower)
+    {
         _preShotState = _state;
         var state = _state;
         var table = _table;
-        _simTask = System.Threading.Tasks.Task.Run(() => Simulator.Run(state, shot, table));
+        var input = shot;
+        _simTask = System.Threading.Tasks.Task.Run(() => Simulator.Run(state, input, table));
 
-        _firedPower = _power;
+        _firedPower = visualPower;
         _strikeT = 0f;
         _mode = Mode.Striking;
         _power = 0f;
+    }
+
+    // ------------------------------------------------------------------ AI turns
+
+    private System.Collections.Generic.List<byte> LegalTargetsNow() =>
+        _gameType == GameType.EightBall
+            ? EightBallRules.LegalTargets(_game, _state)
+            : SnookerRules.LegalTargets(_snookerGame, _state);
+
+    private void UpdateAi(float dt)
+    {
+        if (!AiTurn)
+        {
+            _aiTask = null;
+            _aiPending = null;
+            return;
+        }
+
+        if (_mode == Mode.BallInHand)
+        {
+            _aiThink += dt;
+            if (_aiThink < 0.9f)
+                return;
+            _placement = Snookering.Core.Ai.ShotPlanner.PlanPlacement(_state, _table, LegalTargetsNow(), _placementInD);
+            _placementValid = true;
+            ConfirmPlacement();
+            _aiThink = 0f;
+            return;
+        }
+
+        if (_mode != Mode.Aiming)
+            return;
+
+        if (_aiPending is null && _aiTask is null)
+        {
+            _aiThink = 0f;
+            var state = _state;
+            var table = _table;
+            var targets = LegalTargetsNow();
+            var difficulty = AiDifficulty;
+            _aiSeed = _aiSeed * 6364136223846793005UL + 1442695040888963407UL;
+            var seed = _aiSeed;
+            var breakShot = _gameType == GameType.EightBall && !_game.BreakTaken;
+            _aiTask = System.Threading.Tasks.Task.Run(() =>
+                breakShot ? PlanBreak(state, table, seed) : Snookering.Core.Ai.ShotPlanner.Plan(state, table, targets, difficulty, seed));
+        }
+
+        _aiThink += dt;
+
+        if (_aiTask is { IsCompleted: true })
+        {
+            if (_aiTask.IsCompletedSuccessfully)
+                _aiPending = _aiTask.Result.Input;
+            else
+                GD.PrintErr($"[ai] planning failed: {_aiTask.Exception?.GetBaseException().Message}");
+            _aiTask = null;
+        }
+
+        if (_aiPending is { } shot)
+        {
+            // Swing the cue visibly onto the AI's aim line, then fire.
+            var target = (float)(shot.AimAngleMicroRad * 1e-6);
+            _aimAngle = Mathf.LerpAngle(_aimAngle, target, 1f - Mathf.Exp(-5f * dt));
+            if (_aiThink > 1.1f && Mathf.Abs(Mathf.AngleDifference(_aimAngle, target)) < 0.005f)
+            {
+                _aimAngle = target;
+                var visual = Mathf.Clamp(((float)shot.Speed - 0.4f) / 6.6f, 0.05f, 1f);
+                FireInput(shot, visual);
+                _aiPending = null;
+            }
+        }
+    }
+
+    /// <summary>Full-power straight break at the rack apex.</summary>
+    private static Snookering.Core.Ai.AiShot PlanBreak(TableState state, TableSpec table, ulong seed)
+    {
+        var cue = state.Ball(0).Pos;
+        var apex = Racks.FootSpot(table);
+        var dir = (apex - cue).Normalized();
+        var angle = Math.Atan2(dir.Y, dir.X);
+        return new Snookering.Core.Ai.AiShot(new ShotInput
+        {
+            AimAngleMicroRad = (int)Math.Round(angle * 1e6),
+            SpeedMmPerSec = 6800,
+            OffsetSide1e4 = 0,
+            OffsetVert1e4 = 0,
+            ElevationCentiDeg = 0,
+            Seed = seed,
+        }, "break");
     }
 
     private void FinishPlayback()
@@ -438,6 +554,8 @@ public partial class MatchController : Node3D
         if (_charging)
             _power = Mathf.PingPong((float)(_power + delta * 0.9), 1f);
 
+        UpdateAi((float)delta);
+
         switch (_mode)
         {
             case Mode.Striking:
@@ -471,7 +589,8 @@ public partial class MatchController : Node3D
                 break;
 
             case Mode.BallInHand:
-                UpdatePlacement();
+                if (!AiTurn)
+                    UpdatePlacement();
                 break;
         }
 
@@ -681,10 +800,19 @@ public partial class MatchController : Node3D
             over = g.FrameOver;
         }
 
+        var aiTag = _aiLevel switch
+        {
+            1 => "P2: AI (easy)",
+            2 => "P2: AI (medium)",
+            3 => "P2: AI (hard)",
+            _ => "P2: human",
+        };
+
         var status = _mode switch
         {
-            _ when over => $"GAME OVER — {_message}   [R] next rack   [G] switch game",
-            Mode.Aiming => $"{_message}   |   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack  [G] switch game",
+            _ when over => $"GAME OVER — {_message}   [R] next rack   [G] switch game   [P] {aiTag}",
+            _ when AiTurn && _mode is Mode.Aiming or Mode.BallInHand => $"{_message} — {aiTag} is thinking…",
+            Mode.Aiming => $"{_message}   |   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack  [G] switch game  [P] {aiTag}",
             Mode.BallInHand => $"{_message} — move the mouse to place the cue ball, click to confirm",
             Mode.Striking or Mode.Simulating => "STRIKE",
             _ => "...",
