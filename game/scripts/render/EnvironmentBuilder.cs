@@ -17,11 +17,16 @@ public static class EnvironmentBuilder
     {
         var root = new Node3D { Name = "Lounge" };
 
-        // ---- floor: dark wood planks tone
+        // ---- floor: real wood parquet (ambientCG WoodFloor043, CC0)
         var floorMat = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.16f, 0.11f, 0.07f),
-            Roughness = 0.38f,
+            AlbedoTexture = GD.Load<Texture2D>("res://assets/textures/floor/color.jpg"),
+            AlbedoColor = new Color(0.55f, 0.5f, 0.45f), // dimmed toward the moody palette
+            NormalEnabled = true,
+            NormalTexture = GD.Load<Texture2D>("res://assets/textures/floor/normal.jpg"),
+            RoughnessTexture = GD.Load<Texture2D>("res://assets/textures/floor/roughness.jpg"),
+            Roughness = 1f,
+            Uv1Scale = new Vector3(7f, 6f, 1f),
         };
         root.AddChild(new MeshInstance3D
         {
@@ -39,8 +44,12 @@ public static class EnvironmentBuilder
             Position = new Vector3(0f, FloorY + 0.006f, 0f),
             MaterialOverride = new StandardMaterial3D
             {
-                AlbedoColor = new Color(0.22f, 0.06f, 0.05f),
+                AlbedoTexture = GD.Load<Texture2D>("res://assets/textures/carpet/color.jpg"),
+                AlbedoColor = new Color(0.5f, 0.22f, 0.18f), // tint the carpet toward deep red
+                NormalEnabled = true,
+                NormalTexture = GD.Load<Texture2D>("res://assets/textures/carpet/normal.jpg"),
                 Roughness = 1f,
+                Uv1Scale = new Vector3(4f, 3f, 1f),
             },
         });
 
@@ -240,6 +249,37 @@ public static class EnvironmentBuilder
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = artColors[i], Roughness = 0.9f },
             });
         }
+
+        // ---- photoscanned props (Poly Haven, CC0)
+        Node3D? Prop(string slug, Vector3 pos, float yawDeg, float scale = 1f)
+        {
+            var path = $"res://assets/models/props/{slug}/{slug}_1k.gltf";
+            if (!ResourceLoader.Exists(path))
+                return null;
+            var n = GD.Load<PackedScene>(path).Instantiate<Node3D>();
+            n.Name = slug;
+            n.Position = pos;
+            n.RotationDegrees = new Vector3(0f, yawDeg, 0f);
+            n.Scale = Vector3.One * scale;
+            root.AddChild(n);
+            return n;
+        }
+
+        // Reading corner: two leather armchairs around a coffee table with a chess set.
+        Prop("ArmChair_01", new Vector3(-4.4f, FloorY, 3.3f), 155f);
+        Prop("ArmChair_01", new Vector3(-2.9f, FloorY, 4.1f), 195f);
+        Prop("CoffeeTable_01", new Vector3(-3.7f, FloorY, 3.6f), 15f);
+        Prop("chess_set", new Vector3(-3.7f, FloorY + 0.42f, 3.6f), 40f, 0.75f);
+
+        // Bar stools in front of the counter.
+        Prop("bar_chair_round_01", new Vector3(-1.3f, FloorY, -3.75f), 170f);
+        Prop("bar_chair_round_01", new Vector3(0f, FloorY, -3.7f), 200f);
+        Prop("bar_chair_round_01", new Vector3(1.3f, FloorY, -3.78f), 185f);
+
+        // Dartboard on the east wall, plant in the corner, shelf on the west wall.
+        var dart = Prop("dartboard", new Vector3(5.88f, FloorY + 1.75f, -1.6f), -90f);
+        Prop("calathea_orbifolia_01", new Vector3(5.3f, FloorY, 4.2f), 0f, 1.2f);
+        var shelf = Prop("Shelf_01", new Vector3(-5.85f, FloorY + 1.45f, -2.2f), 90f);
 
         // ---- cue rack on the west wall
         var rack = new Node3D { Name = "CueRack", Position = new Vector3(-5.9f, 0f, 1.8f) };

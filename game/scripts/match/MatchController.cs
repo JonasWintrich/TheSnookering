@@ -109,6 +109,16 @@ public partial class MatchController : Node3D
                 _pitch = 1.35f;
                 _dist = 2.3f;
             }
+            if (args[i] == "--yaw" && i + 1 < args.Length)
+            {
+                _forceTableView = true;
+                _yaw = Mathf.DegToRad(float.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (args[i] == "--pitch" && i + 1 < args.Length)
+            {
+                _forceTableView = true;
+                _pitch = Mathf.DegToRad(float.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture));
+            }
         }
 
         StartRack(startType);
