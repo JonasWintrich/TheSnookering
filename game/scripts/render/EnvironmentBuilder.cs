@@ -284,10 +284,12 @@ public static class EnvironmentBuilder
         // ---- ambient people (Quaternius animated characters, CC0):
         // one leaning at the bar, one sitting in the reading corner. They idle,
         // fidget occasionally, and clap on good pots (see NpcView).
-        root.AddChild(NpcView.Create("res://assets/models/npc/male_suit.glb",
-            new Vector3(0.9f, FloorY, -3.45f), 15f, basePrefix: "Idle", scale: 0.42f));
-        root.AddChild(NpcView.Create("res://assets/models/npc/female_casual.glb",
-            new Vector3(-4.3f, FloorY + 0.16f, 3.3f), 155f, basePrefix: "Sitting", scale: 0.42f));
+        root.AddChild(NpcView.Create("res://assets/models/npc/suit_man.glb",
+            new Vector3(0.9f, FloorY, -3.35f), 10f, basePrefix: "Idle", scale: 0.9f));
+        root.AddChild(NpcView.Create("res://assets/models/npc/casual_man.glb",
+            new Vector3(-1.6f, FloorY, -3.6f), 195f, basePrefix: "Idle", scale: 0.9f));
+        root.AddChild(NpcView.Create("res://assets/models/npc/formal_woman.glb",
+            new Vector3(-3.4f, FloorY, 2.9f), 205f, basePrefix: "Idle", scale: 0.9f));
 
         // ---- cue rack on the west wall
         var rack = new Node3D { Name = "CueRack", Position = new Vector3(-5.9f, 0f, 1.8f) };

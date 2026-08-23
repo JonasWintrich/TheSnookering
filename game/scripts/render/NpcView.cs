@@ -34,17 +34,6 @@ public partial class NpcView : Node3D
                         ?? npc.FindChild("AnimationPlayer", recursive: true, owned: false) as AnimationPlayer;
             npc.PickClips(basePrefix);
 
-            // The source packs are untextured (near-white). Tint into warm dark
-            // figures that sit naturally in the lounge lighting.
-            var tint = new StandardMaterial3D
-            {
-                AlbedoColor = new Color(0.32f, 0.26f, 0.22f),
-                Roughness = 0.85f,
-                MetallicSpecular = 0.2f,
-            };
-            foreach (var child in model.FindChildren("*", "MeshInstance3D", recursive: true, owned: false))
-                if (child is MeshInstance3D mi)
-                    mi.MaterialOverride = tint;
         }
         return npc;
     }
