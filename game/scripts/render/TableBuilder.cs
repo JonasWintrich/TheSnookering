@@ -30,11 +30,14 @@ public static class TableBuilder
             : "res://assets/models/table_snooker.glb";
         if (ResourceLoader.Exists(heroPath))
         {
+            var snooker = spec.Snooker is not null;
             var hero = GD.Load<PackedScene>(heroPath).Instantiate<Node3D>();
             hero.Name = "HeroTable";
-            RemapMaterials(hero);
+            RemapMaterials(hero, snooker);
             root.AddChild(hero);
             AddMarkings(root, spec, hw);
+            if (snooker)
+                AddSnookerPocketOverlay(root, spec);
             return root;
         }
 
@@ -267,9 +270,9 @@ public static class TableBuilder
     }
 
     /// <summary>Replace imported GLB materials with the richer runtime versions, by name.</summary>
-    private static void RemapMaterials(Node3D hero)
+    private static void RemapMaterials(Node3D hero, bool snooker = false)
     {
-        var map = RuntimeMaterials();
+        var map = RuntimeMaterials(snooker);
         foreach (var node in hero.FindChildren("*", "MeshInstance3D", recursive: true, owned: false))
         {
             if (node is not MeshInstance3D mi || mi.Mesh is null)
@@ -277,13 +280,16 @@ public static class TableBuilder
             for (var s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
             {
                 var name = mi.Mesh.SurfaceGetMaterial(s)?.ResourceName ?? "";
+                var dot = name.IndexOf('.');
+                if (dot > 0)
+                    name = name[..dot]; // Blender duplicate suffix (.001) tolerance
                 if (map.TryGetValue(name, out var replacement))
                     mi.SetSurfaceOverrideMaterial(s, replacement);
             }
         }
     }
 
-    private static System.Collections.Generic.Dictionary<string, Material> RuntimeMaterials()
+    private static System.Collections.Generic.Dictionary<string, Material> RuntimeMaterials(bool snooker = false)
     {
         var feltNoise = new NoiseTexture2D
         {
@@ -296,18 +302,23 @@ public static class TableBuilder
         };
         var cloth = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.045f, 0.36f, 0.15f),
+            // Snooker cloth runs a deeper tournament green than pool cloth.
+            AlbedoColor = snooker ? new Color(0.025f, 0.30f, 0.10f) : new Color(0.045f, 0.36f, 0.15f),
             Roughness = 0.94f,
+            MetallicSpecular = 0.15f, // felt: no grazing-angle shine
             NormalEnabled = true,
             NormalTexture = feltNoise,
             NormalScale = 0.5f,
             Uv1Scale = new Vector3(14f, 14f, 1f),
         };
         var cushion = (StandardMaterial3D)cloth.Duplicate();
-        cushion.AlbedoColor = new Color(0.04f, 0.33f, 0.135f);
+        cushion.AlbedoColor = snooker ? new Color(0.022f, 0.27f, 0.09f) : new Color(0.04f, 0.33f, 0.135f);
 
-        var lineCloth = (StandardMaterial3D)cloth.Duplicate();
-        lineCloth.AlbedoColor = new Color(0.55f, 0.6f, 0.5f);
+        // The model's pool head-string line: shown on pool, hidden (plain cloth)
+        // on snooker — snooker draws its own baulk line, D and spots.
+        var lineCloth = snooker ? cloth : (StandardMaterial3D)cloth.Duplicate();
+        if (!snooker)
+            lineCloth.AlbedoColor = new Color(0.55f, 0.6f, 0.5f);
 
         return new System.Collections.Generic.Dictionary<string, Material>
         {
@@ -322,10 +333,11 @@ public static class TableBuilder
             ["TableWood"] = new StandardMaterial3D
             {
                 AlbedoColor = new Color(0.15f, 0.075f, 0.038f),
-                Roughness = 0.32f,
+                Roughness = 0.42f,
+                MetallicSpecular = 0.25f,
                 ClearcoatEnabled = true,
-                Clearcoat = 0.35f,
-                ClearcoatRoughness = 0.2f,
+                Clearcoat = 0.12f, // subtle sheen without grazing streaks along the apron
+                ClearcoatRoughness = 0.4f,
             },
             ["MetalFrame"] = new StandardMaterial3D
             {
@@ -336,7 +348,8 @@ public static class TableBuilder
             ["Black"] = new StandardMaterial3D
             {
                 AlbedoColor = new Color(0.03f, 0.03f, 0.032f),
-                Roughness = 0.7f,
+                Roughness = 1f,
+                MetallicSpecular = 0.05f, // no grazing streaks on the apron trim
             },
             ["PocketBlack"] = new StandardMaterial3D
             {
@@ -367,6 +380,65 @@ public static class TableBuilder
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             },
         };
+    }
+
+    /// <summary>
+    /// The hero model's pocket mouths are wider than snooker's tight 86 mm physics
+    /// openings (the model is a rescaled pool table). Overlay the physics jaw arcs
+    /// as cushion-cloth chord boxes and mark the drop with a dark disc, so what
+    /// the player sees matches what the simulation accepts.
+    /// </summary>
+    private static void AddSnookerPocketOverlay(Node3D root, TableSpec spec)
+    {
+        var mats = RuntimeMaterials(snooker: true);
+        var cushionMat = mats["CushionCloth"];
+        var holeMat = mats["Hole"];
+
+        var arcIdx = 0;
+        foreach (var arc in spec.Jaws)
+        {
+            var a0 = Mathf.Atan2((float)arc.StartDir.Y, (float)arc.StartDir.X);
+            var a1 = Mathf.Atan2((float)arc.EndDir.Y, (float)arc.EndDir.X);
+            var sweep = Mathf.Wrap(a1 - a0, 0f, Mathf.Tau);
+            const int chords = 5;
+            const float thickness = 0.016f;
+
+            for (var s = 0; s < chords; s++)
+            {
+                var am = a0 + sweep * (s + 0.5f) / chords;
+                var radial = new Vector3(Mathf.Cos(am), 0f, -Mathf.Sin(am));
+                var centerWorld = SimWorld.ToWorld(arc.Center) + radial * ((float)arc.Radius + thickness * 0.5f);
+                var chordLen = 2f * (float)arc.Radius * Mathf.Sin(sweep / (2 * chords)) + 0.006f;
+
+                var box = new MeshInstance3D
+                {
+                    Name = $"JawOverlay{arcIdx}_{s}",
+                    Mesh = new BoxMesh { Size = new Vector3(chordLen, CushionHeight, thickness) },
+                    MaterialOverride = cushionMat,
+                };
+                var tangent = new Vector3(radial.Z, 0f, -radial.X);
+                box.Basis = new Basis(tangent, Vector3.Up, radial);
+                box.Position = centerWorld + new Vector3(0f, CushionHeight * 0.5f, 0f);
+                root.AddChild(box);
+            }
+            arcIdx++;
+        }
+
+        foreach (var pocket in spec.Pockets)
+        {
+            root.AddChild(new MeshInstance3D
+            {
+                Name = $"Drop{pocket.Id}",
+                Mesh = new CylinderMesh
+                {
+                    TopRadius = (float)pocket.FallRadius + 0.006f,
+                    BottomRadius = (float)pocket.FallRadius + 0.006f,
+                    Height = 0.003f,
+                },
+                Position = SimWorld.ToWorld(pocket.FallCenter, 0.0016f),
+                MaterialOverride = holeMat,
+            });
+        }
     }
 
     /// <summary>Baulk line, D and spots (snooker) — drawn on top of either table body.</summary>
