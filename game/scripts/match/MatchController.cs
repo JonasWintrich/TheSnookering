@@ -20,6 +20,9 @@ public partial class MatchController : Node3D
 {
     private enum Mode { Aiming, Striking, Simulating, Playback, BallInHand }
 
+    /// <summary>Rest-facing correction for the player body GLB (tuned by screenshot).</summary>
+    private const float PlayerBodyYawOffset = -Mathf.Pi / 2f;
+
     public enum GameType { EightBall, Snooker }
 
     private TableSpec _table = null!;
@@ -78,6 +81,7 @@ public partial class MatchController : Node3D
     private bool _placementInD;
 
     private Node3D? _tableNode;
+    private Node3D? _playerBody; // first-person aim-stance body (arms/hands on the cue)
     private AudioManager _audio = null!;
     private int _nextEventIdx;
 
@@ -101,6 +105,19 @@ public partial class MatchController : Node3D
 
         _cue = CueView.Create();
         AddChild(_cue);
+
+        if (ResourceLoader.Exists("res://assets/models/npc/player_aim.glb"))
+        {
+            _playerBody = GD.Load<PackedScene>("res://assets/models/npc/player_aim.glb").Instantiate<Node3D>();
+            _playerBody.Name = "PlayerBody";
+            AddChild(_playerBody);
+            if (_playerBody.FindChild("AnimationPlayer", recursive: true, owned: false) is AnimationPlayer ap
+                && ap.GetAnimationList() is { Length: > 0 } clips)
+            {
+                ap.Play(clips[0]);
+                ap.SpeedScale = 0f; // hold the aim pose
+            }
+        }
 
         _audio = new AudioManager { Name = "Audio" };
         AddChild(_audio);
@@ -722,6 +739,24 @@ public partial class MatchController : Node3D
     {
         var aimingPhase = _mode is Mode.Aiming or Mode.Striking;
         _cue.Visible = aimingPhase;
+
+        if (_playerBody is not null)
+        {
+            // The player's body: standing on the floor behind the cue, facing the
+            // aim. Only shown in the aim view, and only when far enough back that
+            // the camera isn't inside the head.
+            _playerBody.Visible = aimingPhase && (_forceTableView || (InAimView && _aimDist > 0.42f));
+            if (_playerBody.Visible)
+            {
+                var ball = CueBallPosition();
+                var dir = new Vector3(Mathf.Cos(_aimAngle), 0f, -Mathf.Sin(_aimAngle));
+                var pos = ball - dir * 0.95f;
+                pos.Y = Render.EnvironmentBuilder.FloorY;
+                _playerBody.Position = pos;
+                _playerBody.Rotation = new Vector3(0f, _aimAngle + PlayerBodyYawOffset, 0f);
+            }
+        }
+
         if (!aimingPhase)
             return;
 
