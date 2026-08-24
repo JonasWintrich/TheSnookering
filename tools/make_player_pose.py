@@ -33,7 +33,7 @@ print("rest UpperArm.L dir:", tuple(round(v, 2) for v in bone_dir("UpperArm.L"))
 print("rest Hips dir:", tuple(round(v, 2) for v in bone_dir("Hips")))
 
 # Bend the body with eulers (these behaved as expected).
-for name, x in [("Abdomen", 32), ("Torso", 18), ("Neck", -24), ("Head", -14)]:
+for name, x in [("Abdomen", 58), ("Torso", 26), ("Neck", -46), ("Head", -20)]:
     pb = arm.pose.bones[name]
     pb.rotation_mode = "XYZ"
     pb.rotation_euler = (math.radians(x), 0, 0)
@@ -66,16 +66,30 @@ def aim_bone(name, direction):
 
 
 # Bridge arm (left): forward and 30 deg down, forearm continuing straight.
-bridge = (facing * math.cos(math.radians(30)) + down * math.sin(math.radians(30))).normalized()
+bridge = (facing * math.cos(math.radians(14)) + down * math.sin(math.radians(14))).normalized()
 aim_bone("UpperArm.L", bridge)
-aim_bone("LowerArm.L", (facing * math.cos(math.radians(38)) + down * math.sin(math.radians(38))).normalized())
-aim_bone("Hand.L", (facing * math.cos(math.radians(20)) + down * math.sin(math.radians(20))).normalized())
+aim_bone("LowerArm.L", (facing * math.cos(math.radians(20)) + down * math.sin(math.radians(20))).normalized())
+aim_bone("Hand.L", (facing * math.cos(math.radians(8)) + down * math.sin(math.radians(8))).normalized())
 
 # Grip arm (right): upper arm back+down, forearm hanging almost straight down.
 grip_up = (-facing * math.cos(math.radians(55)) + down * math.sin(math.radians(55))).normalized()
 aim_bone("UpperArm.R", grip_up)
 aim_bone("LowerArm.R", (down + -facing * 0.15).normalized())
 aim_bone("Hand.R", (down + facing * 0.2).normalized())
+
+# Report where the hands ended up, relative to the armature origin (feet at 0,0,0).
+# The game uses these to place the body so the bridge hand lands at the cue ball.
+print("--- HAND OFFSETS (x=side, y=facing, z=up; feet at origin) ---")
+for bone in ("Hand.L", "Hand.R"):
+    pb = arm.pose.bones[bone]
+    m = arm.matrix_world @ pb.matrix
+    head = m.to_translation()
+    tail = m @ mathutils.Vector((0, pb.length, 0))
+    # Project onto the facing axis so the numbers are aim-relative.
+    for label, v in (("head", head), ("tail", tail)):
+        fwd = v.dot(facing)
+        side = v.dot(mathutils.Vector((facing.y, -facing.x, 0)).normalized())
+        print(f"{bone} {label}: forward={fwd:+.3f} side={side:+.3f} up={v.z:+.3f}")
 
 bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -112,3 +126,46 @@ bpy.ops.export_scene.gltf(
     export_current_frame=False,
 )
 print("exported", OUT)
+
+# ---------------------------------------------------------------- arms only
+# The aim camera sits where the player's head is, so the head and torso would
+# fill the screen. Keep only the geometry weighted to the arm bones — the
+# standard first-person-arms trick — and export that as the aim-view body.
+ARM_PREFIXES = ("Shoulder", "UpperArm", "LowerArm", "Hand",
+                "Index", "Middle", "Ring", "Pinky", "Thumb")
+
+for obj in [o for o in bpy.data.objects if o.type == "MESH"]:
+    arm_groups = {g.index for g in obj.vertex_groups
+                  if g.name.startswith(ARM_PREFIXES) and g.name.endswith(".L")}
+    if not arm_groups:
+        bpy.data.objects.remove(obj, do_unlink=True)
+        continue
+
+    doomed = []
+    for v in obj.data.vertices:
+        arm_w = sum(g.weight for g in v.groups if g.group in arm_groups)
+        total = sum(g.weight for g in v.groups) or 1.0
+        if arm_w / total < 0.5:
+            doomed.append(v.index)
+
+    if len(doomed) == len(obj.data.vertices):
+        bpy.data.objects.remove(obj, do_unlink=True)
+        continue
+
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[bm.verts[i] for i in doomed], context="VERTS")
+    bm.to_mesh(obj.data)
+    bm.free()
+    print(f"arms-only: {obj.name} kept {len(obj.data.vertices)} verts")
+
+ARMS_OUT = "game/assets/models/npc/player_arms.glb"
+bpy.ops.export_scene.gltf(
+    filepath=os.path.abspath(ARMS_OUT),
+    export_format="GLB",
+    export_animations=True,
+    export_current_frame=False,
+)
+print("exported", ARMS_OUT)

@@ -23,6 +23,16 @@ public partial class MatchController : Node3D
     /// <summary>Rest-facing correction for the player body GLB (tuned by screenshot).</summary>
     private const float PlayerBodyYawOffset = -Mathf.Pi / 2f;
 
+    // Bridge-hand offset inside player_aim.glb, with the feet at the model origin.
+    // Printed by tools/make_player_pose.py — re-measure if the pose changes.
+    private const float BodyHandForward = 0.848f;
+    private const float BodyHandSide = -0.152f;
+    private const float BodyHandUp = 0.973f;
+
+    // Where that hand should end up: flat on the cloth, just behind the cue ball.
+    private const float BridgeBehindBall = 0.24f;
+    private const float BridgeHeight = 0.035f;
+
     public enum GameType { EightBall, Snooker }
 
     private TableSpec _table = null!;
@@ -46,7 +56,7 @@ public partial class MatchController : Node3D
     private float _yaw = -Mathf.Pi / 2f; // playback orbit: behind the baulk end
     private float _pitch = 0.55f; // shot view stays low so the lamps are not in the way
     private float _dist = 2.7f;
-    private float _aimDist = 0.6f;
+    private float _aimDist = 0.95f; // eye distance: keeps the bridge arm in proportion
     private float _aimPitch = 0.30f; // low over the cue
     private bool _orbiting;
     private Vector3 _camPos;
@@ -82,6 +92,8 @@ public partial class MatchController : Node3D
 
     private Node3D? _tableNode;
     private Node3D? _playerBody; // first-person aim-stance body (arms/hands on the cue)
+    private Skeleton3D? _bodySkeleton;
+    private int _bridgeBone = -1;
     private AudioManager _audio = null!;
     private int _nextEventIdx;
 
@@ -106,9 +118,9 @@ public partial class MatchController : Node3D
         _cue = CueView.Create();
         AddChild(_cue);
 
-        if (ResourceLoader.Exists("res://assets/models/npc/player_aim.glb"))
+        if (ResourceLoader.Exists("res://assets/models/npc/player_arms.glb"))
         {
-            _playerBody = GD.Load<PackedScene>("res://assets/models/npc/player_aim.glb").Instantiate<Node3D>();
+            _playerBody = GD.Load<PackedScene>("res://assets/models/npc/player_arms.glb").Instantiate<Node3D>();
             _playerBody.Name = "PlayerBody";
             AddChild(_playerBody);
             if (_playerBody.FindChild("AnimationPlayer", recursive: true, owned: false) is AnimationPlayer ap
@@ -116,6 +128,21 @@ public partial class MatchController : Node3D
             {
                 ap.Play(clips[0]);
                 ap.SpeedScale = 0f; // hold the aim pose
+            }
+
+            // The bridge hand is placed by measuring the bone at runtime, which
+            // sidesteps the glTF import's coordinate conversion entirely.
+            _bodySkeleton = _playerBody.FindChild("Skeleton3D", recursive: true, owned: false) as Skeleton3D;
+            if (_bodySkeleton is not null)
+            {
+                _bridgeBone = _bodySkeleton.FindBone("Hand.L");
+                if (_bridgeBone < 0)
+                    _bridgeBone = _bodySkeleton.FindBone("LowerArm.L");
+                GD.Print($"[body] skeleton bones={_bodySkeleton.GetBoneCount()} bridgeBone={_bridgeBone}");
+            }
+            else
+            {
+                GD.PrintErr("[body] no Skeleton3D found in player_aim.glb");
             }
         }
 
@@ -745,15 +772,33 @@ public partial class MatchController : Node3D
             // The player's body: standing on the floor behind the cue, facing the
             // aim. Only shown in the aim view, and only when far enough back that
             // the camera isn't inside the head.
-            _playerBody.Visible = aimingPhase && (_forceTableView || (InAimView && _aimDist > 0.42f));
+            _playerBody.Visible = aimingPhase && (_forceTableView || (InAimView && _aimDist > 0.8f));
             if (_playerBody.Visible)
             {
+                // Solve the body position from where the bridge hand must land, so
+                // the hand always rests on the cloth behind the ball. The feet end
+                // up slightly below the floor — never visible from the aim view.
                 var ball = CueBallPosition();
                 var dir = new Vector3(Mathf.Cos(_aimAngle), 0f, -Mathf.Sin(_aimAngle));
-                var pos = ball - dir * 0.95f;
-                pos.Y = Render.EnvironmentBuilder.FloorY;
-                _playerBody.Position = pos;
+                var side = Vector3.Up.Cross(dir).Normalized();
+
+                var hand = ball - dir * BridgeBehindBall;
+                hand.Y = BridgeHeight;
+
                 _playerBody.Rotation = new Vector3(0f, _aimAngle + PlayerBodyYawOffset, 0f);
+                _playerBody.Position = hand
+                                       - dir * BodyHandForward
+                                       - side * BodyHandSide
+                                       - Vector3.Up * BodyHandUp;
+
+                // Self-calibrate: the rig is rigid, so one correction lands the
+                // bridge hand exactly on its target no matter how the GLB was
+                // authored or converted on import.
+                if (_bodySkeleton is not null && _bridgeBone >= 0)
+                {
+                    var actual = _bodySkeleton.GlobalTransform * _bodySkeleton.GetBoneGlobalPose(_bridgeBone).Origin;
+                    _playerBody.Position += hand - actual;
+                }
             }
         }
 
