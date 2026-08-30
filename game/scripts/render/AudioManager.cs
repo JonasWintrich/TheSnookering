@@ -138,17 +138,21 @@ public partial class AudioManager : Node3D
         _families[name] = byTier;
     }
 
+    /// <summary>
+    /// Load a looping bed. The loop points come from the import settings (raw PCM,
+    /// loop_mode=1) rather than being computed here: Godot's default .wav import is
+    /// lossy QOA, whose Data is compressed bytes, so deriving a loop end from the
+    /// byte length pointed into the middle of compressed data and played as static.
+    /// </summary>
     private static AudioStream? Loop(string path)
     {
         if (!ResourceLoader.Exists(path))
             return null;
         var stream = GD.Load<AudioStream>(path);
-        if (stream is AudioStreamWav wav)
+        if (stream is AudioStreamWav { LoopMode: AudioStreamWav.LoopModeEnum.Disabled } wav)
         {
             var copy = (AudioStreamWav)wav.Duplicate();
-            copy.LoopMode = AudioStreamWav.LoopModeEnum.Forward;
-            copy.LoopBegin = 0;
-            copy.LoopEnd = copy.Data.Length / 2;
+            copy.LoopMode = AudioStreamWav.LoopModeEnum.Forward; // fallback only
             return copy;
         }
         return stream;

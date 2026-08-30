@@ -373,7 +373,9 @@ def roll_loop(rng: random.Random, sliding: bool) -> list[float]:
 def ambience(rng: random.Random) -> list[float]:
     """Room tone plus indistinct bar murmur — 20 s, loops."""
     n = int(SR * 20.0)
-    out = lowpass(noise(n, rng), 900.0)
+    # A real room tone is weighted low. Mid-band noise reads as tape hiss, which
+    # is exactly what "background static" sounds like, so roll it off hard.
+    out = lowpass(lowpass(noise(n, rng), 260.0), 260.0)
     for i in range(n):
         out[i] *= 0.5 * (1.0 + 0.12 * math.sin(2 * math.pi * 0.07 * i / SR))
 
@@ -389,11 +391,35 @@ def ambience(rng: random.Random) -> list[float]:
         for i in range(n):
             g = math.sin(2 * math.pi * rate * (i / SR + phase))
             voice[i] *= max(0.0, g) ** 2
-        mix(out, voice, db(rng.uniform(-30.0, -24.0)))
+        mix(out, lowpass(voice, 1400.0), db(rng.uniform(-34.0, -28.0)))
     return out
 
 
 # ----------------------------------------------------------------- main
+LOOPING = ("roll_loop.wav", "slide_loop.wav", "ambience.wav")
+
+
+def mark_loops_pcm() -> None:
+    """Godot imports .wav as lossy QOA by default and does not loop it.
+
+    QOA stores compressed bytes, so any loop point computed from the byte length
+    at runtime lands in the middle of compressed data and plays as static - which
+    is exactly what happened. Import these three as raw PCM and let Godot loop
+    them natively instead.
+    """
+    for name in LOOPING:
+        path = os.path.join(OUT, name + ".import")
+        if not os.path.exists(path):
+            continue  # created on the next Godot import; re-run this after
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        text = text.replace("compress/mode=2", "compress/mode=0")
+        text = text.replace("edit/loop_mode=0", "edit/loop_mode=1")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        print("patched", os.path.normpath(path))
+
+
 def main() -> None:
     for tier, v in enumerate(CLICK_TIERS):
         for variant in range(6):
@@ -423,7 +449,8 @@ def main() -> None:
 
     write_wav("roll_loop.wav", roll_loop(random.Random(6000), sliding=False), rms_db=-42.0)
     write_wav("slide_loop.wav", roll_loop(random.Random(6100), sliding=True), rms_db=-38.0)
-    write_wav("ambience.wav", ambience(random.Random(7000)), rms_db=-50.0)
+    write_wav("ambience.wav", ambience(random.Random(7000)), rms_db=-54.0)
+    mark_loops_pcm()
 
 
 if __name__ == "__main__":

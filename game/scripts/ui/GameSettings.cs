@@ -9,7 +9,7 @@ public static class GameSettings
 
     public static float MasterVolume = 0.9f;
     public static float SfxVolume = 0.9f;
-    public static float AmbienceVolume = 0.6f;
+    public static float AmbienceVolume = 0.35f;
     /// <summary>0 = low, 1 = medium, 2 = high.</summary>
     public static int GraphicsPreset = 2;
     public static float AimSensitivity = 1.0f;
