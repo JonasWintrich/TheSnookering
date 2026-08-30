@@ -198,7 +198,7 @@ public partial class MenuLayer : CanvasLayer
         joinRow.AddThemeConstantOverride("separation", 8);
         _address = new LineEdit
         {
-            PlaceholderText = "host address, e.g. 100.87.4.12",
+            PlaceholderText = "host address  (1.2.3.4  or  1.2.3.4:56789)",
             CustomMinimumSize = new Vector2(280, 44),
         };
         joinRow.AddChild(_address);

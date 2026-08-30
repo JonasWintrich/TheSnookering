@@ -56,21 +56,66 @@ public partial class NetworkManager : Node
         return "";
     }
 
+    /// <summary>
+    /// Join a host. Accepts "1.2.3.4" or "1.2.3.4:56789" — relay and tunnel
+    /// services hand out an arbitrary port, so pasting the address they give you
+    /// has to just work.
+    /// </summary>
     public string Join(string address, int port = DefaultPort)
     {
         Leave();
         if (string.IsNullOrWhiteSpace(address))
             return "Enter the host's address.";
 
+        var (host, resolvedPort) = SplitHostPort(address, port);
+        port = resolvedPort;
+
         var peer = new ENetMultiplayerPeer();
-        var err = peer.CreateClient(address.Trim(), port);
+        var err = peer.CreateClient(host, port);
         if (err != Error.Ok)
             return $"Could not reach {address}:{port} ({err}).";
 
         Multiplayer.MultiplayerPeer = peer;
         Current = Role.Guest;
-        GD.Print($"[net] connecting to {address}:{port}");
+        GD.Print($"[net] connecting to {host}:{port}");
         return "";
+    }
+
+    /// <summary>
+    /// Split a pasted address into host and port. Handles "1.2.3.4",
+    /// "1.2.3.4:56789", "tunnel.example.com:56789", "[::1]:56789" and a bare
+    /// "::1" — a tunnel's address is copied and pasted by hand, so the parsing
+    /// has to tolerate whichever shape the provider prints.
+    /// </summary>
+    public static (string Host, int Port) SplitHostPort(string address, int fallbackPort)
+    {
+        var text = address.Trim();
+
+        if (text.StartsWith('['))                       // [::1] or [::1]:port
+        {
+            var close = text.IndexOf(']');
+            if (close > 0)
+            {
+                var inner = text[1..close];
+                var rest = text[(close + 1)..];
+                if (rest.StartsWith(':') && int.TryParse(rest[1..], out var bracketPort))
+                    return (inner, bracketPort);
+                return (inner, fallbackPort);
+            }
+        }
+
+        var colon = text.LastIndexOf(':');
+        if (colon <= 0)
+            return (text, fallbackPort);
+
+        // More than one colon and no brackets means a bare IPv6 literal, which
+        // carries no port however tempting the last colon looks.
+        if (text.IndexOf(':') != colon)
+            return (text, fallbackPort);
+
+        return int.TryParse(text[(colon + 1)..], out var explicitPort)
+            ? (text[..colon], explicitPort)
+            : (text, fallbackPort);
     }
 
     public void Leave()

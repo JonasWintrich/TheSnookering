@@ -1119,9 +1119,9 @@ public partial class MatchController : Node3D
             var error = _net.Host();
             _menu.SetOnlineStatus(error.Length > 0
                 ? error
-                : $"Hosting on port {Net.NetworkManager.DefaultPort}. Your friend joins with:  " +
+                : $"Hosting on UDP port {Net.NetworkManager.DefaultPort}.  Same network? Your friend joins with:  " +
                   string.Join("  or  ", Net.NetworkManager.LocalAddresses()) +
-                  "\n(Over the internet: your Tailscale address, or forward that UDP port.)", false);
+                  "\nDifferent network? Point a tunnel at that port and send them the public address it gives you — see MULTIPLAYER.md.", false);
         };
 
         _menu.JoinRequested += address =>

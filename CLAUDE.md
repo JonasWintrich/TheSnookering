@@ -49,6 +49,19 @@ does nothing:
 "$GODOT" --path game --headless --export-release "Windows Desktop" ../out/build/Snookering.exe
 ```
 
+Two-machine networking can be exercised locally. `--host` / `--join <addr>` drive
+two instances, and `tools/udp_relay.py` stands in for a tunnel service (playit.gg),
+including its address rewriting:
+
+```bash
+python tools/udp_relay.py 25999 127.0.0.1 24555 --delay 90 --loss 4   # 180 ms RTT, 4% loss
+"$GODOT" --path game -- --host --break 0.9 --quit-after 620
+"$GODOT" --path game -- --join 127.0.0.1:25999 --quit-after 560
+```
+
+Both logs must print the same `[net] shot N physics=... rules=...` and the host
+`shot N agreed`.
+
 Harness flags (parsed by `game/scripts/debug/DebugAutoload.cs`, always after `--`): `--screenshot <path>`, `--dump-state <path>` (positions of nodes in group `balls`), `--frame <N>` (frames to wait; give TAA/GI ~45 to settle), `--quit-after <N>`. Paths must be absolute — Godot's cwd differs.
 
 If Godot is missing from `tools/`, re-download: `Godot_v4.7.2-stable_mono_win64.zip` from github.com/godotengine/godot-builds releases, extract into `tools/godot/`.

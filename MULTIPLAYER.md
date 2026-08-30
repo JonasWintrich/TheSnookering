@@ -11,31 +11,56 @@ on a poor connection — there is no ball-position streaming to stutter.
 2. **Guest:** Main menu → **Play Online** → type that address → **Join**.
 3. **Host:** pick 8-Ball or Snooker → **Start match**.
 
-## Over the internet
+## Different networks (over the internet)
 
-Your machines cannot reach each other directly by default. Two options:
+Two computers behind two home routers cannot reach each other directly — neither
+has an address the other can dial. This is how the internet works rather than a
+limitation of the game, and every online game solves it the same way: something
+publicly reachable sits in the middle. You only need to set that up **on the host
+side**; the guest just types an address.
 
-### Tailscale (recommended — no router configuration)
+### A free tunnel (recommended — only the host sets anything up)
 
-Free, takes about five minutes, and works even on connections where port
-forwarding is impossible (most mobile and many fibre ISPs use carrier-grade NAT).
+A tunnel service gives your computer a public address and forwards traffic to it,
+without touching your router. It works behind carrier-grade NAT, where port
+forwarding is impossible.
 
-1. Both players install [Tailscale](https://tailscale.com/download) and sign in
-   with the same account, or one invites the other to their tailnet.
-2. The host runs `tailscale ip -4` (or reads it in the Tailscale app) to get an
-   address like `100.87.4.12`.
-3. Host the match as above; the guest joins using that Tailscale address.
+**Host, once:**
 
-Everything then behaves exactly like a LAN game.
+1. Download the agent from [playit.gg](https://playit.gg/download) and run it. It
+   opens a browser so you can claim it with a free account.
+2. In the playit dashboard: **Tunnels → Add Tunnel → UDP**, local port **24555**.
+3. It shows you a public address like `147.185.221.23:12345` or
+   `something.gl.at.ply.gg:12345`. That is what your friend needs.
+4. Leave the agent running while you play.
 
-### Port forwarding (if you control the router)
+**Then:** host the match in-game as usual, send your friend that address, and they
+paste it — port and all — into the Join field. They install nothing.
 
-1. Host forwards **UDP port 24555** to their computer's local IP.
-2. Host finds their public IP (e.g. from whatismyip.com).
-3. Guest joins using that public IP.
+> The Join field accepts a plain address (`1.2.3.4`), an address with a port
+> (`1.2.3.4:12345`) and a hostname (`foo.gl.at.ply.gg:12345`). A tunnel hands out
+> a port of its own choosing, so paste the whole thing.
 
-This fails if your ISP does not give you a real public IP — if in doubt, use
-Tailscale instead.
+### Tailscale (if you would rather both install something)
+
+Free, about five minutes each. Both players install
+[Tailscale](https://tailscale.com/download) and sign in to the same account (or
+one invites the other). The host reads their address from the app — something
+like `100.87.4.12` — and the guest joins with it. It then behaves exactly like a
+LAN game.
+
+### Port forwarding (only if you control the router)
+
+Forward **UDP port 24555** to the host's local IP, then the guest joins using the
+host's public IP. This silently fails on many mobile and fibre connections, which
+do not hand out a real public IP — if in doubt, use a tunnel instead.
+
+### Will it play well over a long connection?
+
+Yes. The game sends one small shot description and both machines simulate it, so
+latency delays when a shot *starts*, never how it plays out — no rubber-banding,
+no stutter. It has been tested through a relay at 180 ms round trip with 4% packet
+loss and stayed perfectly in sync; lost packets are simply re-sent.
 
 ## During the match
 
