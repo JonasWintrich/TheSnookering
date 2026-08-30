@@ -45,14 +45,19 @@ public partial class MatchController : Node3D
     private float _pitch = 0.55f; // shot view stays low so the lamps are not in the way
     private float _dist = 2.7f;
     private float _aimDist = 0.6f;
-    private float _aimPitch = 0.30f; // low over the cue
+    private float _aimPitch = 0.30f; // low over the cue (>= MinAimPitch)
 
-    /// <summary>
-    /// Floor for the aim camera's height above the cloth. Lowering the view stops
-    /// here, which keeps the eye above the cue and the bridge arm instead of
-    /// sliding inside them.
-    /// </summary>
-    private const float MinEyeHeight = 0.145f;
+    // Camera limits, so no view can end up inside the cue, the table or a lamp.
+    // The cue rises from the tip at CueView.ElevationRad, so the aim camera has to
+    // stay steeper than that to remain above it at every zoom distance.
+    private const float MinAimPitch = 0.22f;   // > cue elevation (0.10) + margin
+    private const float MaxAimPitch = 0.95f;
+    private const float MinEyeHeight = 0.145f; // above the cloth and the cue butt
+    private const float MaxEyeHeight = 1.05f;  // below the pendant lamps
+
+    private const float MinOrbitPitch = 0.28f;
+    private const float MaxOrbitPitch = 1.45f;
+    private const float MinOrbitHeight = 0.30f; // never sinks into the table
     private bool _orbiting;
     private Vector3 _camPos;
     private Vector3 _camLook;
@@ -123,6 +128,10 @@ public partial class MatchController : Node3D
         {
             if (args[i] == "--game" && i + 1 < args.Length && args[i + 1] == "snooker")
                 startType = GameType.Snooker;
+            if (args[i] == "--aimpitch" && i + 1 < args.Length)
+                _aimPitch = Mathf.Clamp(Mathf.DegToRad(float.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture)), MinAimPitch, MaxAimPitch);
+            if (args[i] == "--aimdist" && i + 1 < args.Length)
+                _aimDist = Mathf.Clamp(float.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture), 0.25f, 1.6f);
             if (args[i] == "--ai" && i + 1 < args.Length)
                 _aiLevel = Math.Clamp(int.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture), 0, 3);
             if (args[i] == "--view" && i + 1 < args.Length && args[i + 1] == "top")
@@ -208,19 +217,19 @@ public partial class MatchController : Node3D
                 {
                     // The camera hangs behind the cue, so turning the aim IS turning the view.
                     _aimAngle -= mm.Relative.X * 0.002f * Mathf.Clamp(_aimDist / 0.6f, 0.4f, 1f);
-                    _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, 0.10f, 1.1f);
+                    _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, MinAimPitch, MaxAimPitch);
                 }
                 else if (_orbiting)
                 {
                     if (InAimView)
                     {
                         _aimAngle -= mm.Relative.X * 0.002f;
-                        _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, 0.10f, 1.1f);
+                        _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, MinAimPitch, MaxAimPitch);
                     }
                     else
                     {
                         _yaw -= mm.Relative.X * 0.005f;
-                        _pitch = Mathf.Clamp(_pitch + mm.Relative.Y * 0.005f, 0.15f, 1.5f);
+                        _pitch = Mathf.Clamp(_pitch + mm.Relative.Y * 0.005f, MinOrbitPitch, MaxOrbitPitch);
                     }
                 }
                 break;
@@ -691,7 +700,7 @@ public partial class MatchController : Node3D
             targetPos = ball
                         - dir * (_aimDist * Mathf.Cos(_aimPitch))
                         + Vector3.Up * (_aimDist * Mathf.Sin(_aimPitch));
-            targetPos.Y = Mathf.Max(targetPos.Y, MinEyeHeight);
+            targetPos.Y = Mathf.Clamp(targetPos.Y, MinEyeHeight, MaxEyeHeight);
             targetLook = ball + dir * 0.6f;
         }
         else
@@ -701,6 +710,7 @@ public partial class MatchController : Node3D
                 Mathf.Sin(_pitch),
                 Mathf.Cos(_yaw) * Mathf.Cos(_pitch)) * _dist;
             targetPos = TableFocus + offset;
+            targetPos.Y = Mathf.Clamp(targetPos.Y, MinOrbitHeight, MaxEyeHeight);
             targetLook = TableFocus;
         }
 
