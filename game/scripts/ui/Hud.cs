@@ -10,6 +10,9 @@ public struct HudState
     public bool GameOver;
     public bool AiTurn;
     public string AiLabel;        // "" when player 2 is human
+    /// <summary>-1 offline/hotseat, else which seat this machine plays.</summary>
+    public int LocalSeat;
+    public bool Online;
     public string Message;
     public float Power;
     public bool Charging;
@@ -250,8 +253,9 @@ public partial class Hud : CanvasLayer
         _title.Text = s.Snooker ? "SNOOKER" : "8-BALL";
 
         var p2Name = string.IsNullOrEmpty(s.AiLabel) ? "Player 2" : s.AiLabel;
-        _nameP1.Text = "Player 1";
-        _nameP2.Text = p2Name;
+        // Online, "Player 2" is meaningless on the guest's screen — say who is who.
+        _nameP1.Text = s.Online ? (s.LocalSeat == 0 ? "You" : "Opponent") : "Player 1";
+        _nameP2.Text = s.Online ? (s.LocalSeat == 1 ? "You" : "Opponent") : p2Name;
 
         if (s.Snooker)
         {

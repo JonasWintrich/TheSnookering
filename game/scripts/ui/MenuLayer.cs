@@ -10,7 +10,7 @@ namespace Snookering.Game.Ui;
 /// </summary>
 public partial class MenuLayer : CanvasLayer
 {
-    public enum Screen { None, Main, Pause, Settings }
+    public enum Screen { None, Main, Pause, Settings, Online }
 
     /// <summary>(snooker, aiLevel) — start a fresh match.</summary>
     public event Action<bool, int>? StartRequested;
@@ -18,12 +18,21 @@ public partial class MenuLayer : CanvasLayer
     public event Action? RestartRequested;
     public event Action? SwitchGameRequested;
     public event Action? MainMenuRequested;
+    public event Action? HostRequested;
+    public event Action<string>? JoinRequested;
+    /// <summary>(snooker) — host starts the online match.</summary>
+    public event Action<bool>? OnlineStartRequested;
+    public event Action? LeaveMatchRequested;
 
     public Screen Current { get; private set; } = Screen.Main;
     public bool Blocking => Current != Screen.None;
 
     private ColorRect _dim = null!;
-    private Control _main = null!, _pause = null!, _settings = null!;
+    private Control _main = null!, _pause = null!, _settings = null!, _online = null!;
+    private Label _onlineStatus = null!;
+    private LineEdit _address = null!;
+    private OptionButton _onlineGame = null!;
+    private Button _startOnline = null!;
     private OptionButton _opponent = null!;
     private Screen _settingsReturn = Screen.Main;
 
@@ -39,6 +48,7 @@ public partial class MenuLayer : CanvasLayer
         _main = BuildMain();
         _pause = BuildPause();
         _settings = BuildSettings();
+        _online = BuildOnline();
 
         Show(Screen.Main);
     }
@@ -50,6 +60,7 @@ public partial class MenuLayer : CanvasLayer
         _main.Visible = screen == Screen.Main;
         _pause.Visible = screen == Screen.Pause;
         _settings.Visible = screen == Screen.Settings;
+        _online.Visible = screen == Screen.Online;
 
         if (screen == Screen.None)
         {
@@ -123,6 +134,10 @@ public partial class MenuLayer : CanvasLayer
         snooker.Pressed += () => { Show(Screen.None); StartRequested?.Invoke(true, _opponent.Selected); };
         box.AddChild(snooker);
 
+        var online = UiTheme.MakeButton("Play Online");
+        online.Pressed += () => Show(Screen.Online);
+        box.AddChild(online);
+
         var settings = UiTheme.MakeButton("Settings");
         settings.Pressed += () => { _settingsReturn = Screen.Main; Show(Screen.Settings); };
         box.AddChild(settings);
@@ -157,10 +172,74 @@ public partial class MenuLayer : CanvasLayer
         box.AddChild(settings);
 
         var main = UiTheme.MakeButton("Main menu");
-        main.Pressed += () => { Show(Screen.Main); MainMenuRequested?.Invoke(); };
+        main.Pressed += () => { LeaveMatchRequested?.Invoke(); Show(Screen.Main); MainMenuRequested?.Invoke(); };
         box.AddChild(main);
 
         return box;
+    }
+
+    private Control BuildOnline()
+    {
+        var box = Centre(460);
+        box.AddChild(UiTheme.MakeLabel("PLAY ONLINE", 34, UiTheme.Accent, HorizontalAlignment.Center));
+
+        _onlineStatus = UiTheme.MakeLabel(
+            "One player hosts, the other joins with their address.",
+            14, UiTheme.TextDim, HorizontalAlignment.Center);
+        _onlineStatus.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _onlineStatus.CustomMinimumSize = new Vector2(440, 44);
+        box.AddChild(_onlineStatus);
+
+        var host = UiTheme.MakeButton("Host a match");
+        host.Pressed += () => HostRequested?.Invoke();
+        box.AddChild(host);
+
+        var joinRow = new HBoxContainer();
+        joinRow.AddThemeConstantOverride("separation", 8);
+        _address = new LineEdit
+        {
+            PlaceholderText = "host address, e.g. 100.87.4.12",
+            CustomMinimumSize = new Vector2(280, 44),
+        };
+        joinRow.AddChild(_address);
+        var join = UiTheme.MakeButton("Join");
+        join.CustomMinimumSize = new Vector2(150, 44);
+        join.Pressed += () => JoinRequested?.Invoke(_address.Text);
+        joinRow.AddChild(join);
+        box.AddChild(joinRow);
+
+        box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 10) });
+
+        var gameRow = new HBoxContainer();
+        gameRow.AddThemeConstantOverride("separation", 10);
+        gameRow.Alignment = BoxContainer.AlignmentMode.Center;
+        var gameLabel = UiTheme.MakeLabel("Game", 15, UiTheme.TextDim);
+        gameLabel.CustomMinimumSize = new Vector2(70, 0);
+        gameRow.AddChild(gameLabel);
+        _onlineGame = new OptionButton { CustomMinimumSize = new Vector2(200, 38) };
+        _onlineGame.AddItem("8-Ball", 0);
+        _onlineGame.AddItem("Snooker", 1);
+        gameRow.AddChild(_onlineGame);
+        box.AddChild(gameRow);
+
+        _startOnline = UiTheme.MakeButton("Start match");
+        _startOnline.Disabled = true;
+        _startOnline.Pressed += () => OnlineStartRequested?.Invoke(_onlineGame.Selected == 1);
+        box.AddChild(_startOnline);
+
+        var back = UiTheme.MakeButton("Back");
+        back.Pressed += () => { LeaveMatchRequested?.Invoke(); Show(Screen.Main); };
+        box.AddChild(back);
+
+        return box;
+    }
+
+    /// <summary>Called by the match as the connection state changes.</summary>
+    public void SetOnlineStatus(string text, bool hostCanStart)
+    {
+        _onlineStatus.Text = text;
+        _startOnline.Disabled = !hostCanStart;
+        _onlineGame.Disabled = !hostCanStart;
     }
 
     private Control BuildSettings()

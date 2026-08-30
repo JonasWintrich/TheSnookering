@@ -30,6 +30,30 @@ public readonly record struct ShotInput
     /// <summary>Seed for any randomness attached to this shot (AI noise). The sim itself is exact.</summary>
     public ulong Seed { get; init; }
 
+    /// <summary>
+    /// Where the cue ball is placed before the shot, in micrometres from the table
+    /// centre, when the player has ball in hand. Null means "play it where it lies".
+    ///
+    /// Ball-in-hand used to be applied straight to the table state, outside this
+    /// struct, which quietly made the claim above false: after a foul, the shot was
+    /// no longer fully described by its input. Carrying the placement here keeps one
+    /// turn to one message. It is quantized like every other field because the
+    /// position originates in a floating-point camera raycast, and two peers must
+    /// reconstruct bit-identical doubles from it.
+    /// </summary>
+    public int? CuePlaceXMicroM { get; init; }
+
+    public int? CuePlaceYMicroM { get; init; }
+
+    public bool HasCuePlacement => CuePlaceXMicroM.HasValue && CuePlaceYMicroM.HasValue;
+
+    public Mathematics.Vec2 CuePlacement =>
+        new(CuePlaceXMicroM.GetValueOrDefault() * 1e-6, CuePlaceYMicroM.GetValueOrDefault() * 1e-6);
+
+    /// <summary>Quantize a placement so every peer derives the same double.</summary>
+    public static (int X, int Y) QuantizePlacement(Mathematics.Vec2 pos) =>
+        ((int)System.Math.Round(pos.X * 1e6), (int)System.Math.Round(pos.Y * 1e6));
+
     public double AimAngleRad => AimAngleMicroRad * 1e-6;
     public double Speed => SpeedMmPerSec * 1e-3;
     public double OffsetSide => OffsetSide1e4 * 1e-4;

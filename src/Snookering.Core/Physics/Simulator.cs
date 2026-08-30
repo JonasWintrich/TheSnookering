@@ -33,6 +33,11 @@ public static class Simulator
         var hash = Fnv1A.Offset;
 
         ref var cue = ref state.Ball(cueBallId);
+        // Ball in hand travels inside the shot, so replaying a shot from its input
+        // alone reproduces the turn exactly — including the placement that preceded
+        // it. This is what lets two networked peers stay in step from one message.
+        if (shot.HasCuePlacement)
+            cue = BallState.AtRest(cueBallId, shot.CuePlacement);
         CueStrike.Apply(ref cue, shot, p);
         events.Add(new SimEvent(0.0, SimEventType.CueStrike, cueBallId, cueBallId, -1, cue.Vel.Length));
 

@@ -30,6 +30,11 @@ public partial class MatchController : Node3D
     private CueView _cue = null!;
     private Ui.Hud _hud = null!;
     private Ui.MenuLayer _menu = null!;
+    private Net.NetworkManager _net = null!;
+
+    // Ball in hand travels inside the shot, so the placement made before firing is
+    // held here until the shot is built.
+    private CoreVec2? _pendingPlacement;
 
     private Mode _mode = Mode.Aiming;
 
@@ -92,6 +97,14 @@ public partial class MatchController : Node3D
     private bool _placementValid;
     private bool _placementInD;
 
+    private float _aimBroadcast;
+    private float _spectatedElevation;
+
+    private ulong _lastPhysicsHash;
+    private ulong _lastRulesHash;
+    private int _shotIndex;
+    private (int Shot, ulong Physics, ulong Rules)? _pendingReport;
+
     private Node3D? _tableNode;
     private AudioManager _audio = null!;
     private int _nextEventIdx;
@@ -106,6 +119,14 @@ public partial class MatchController : Node3D
     private int CurrentPlayer => _gameType == GameType.EightBall ? _game.CurrentPlayer : _snookerGame.CurrentPlayer;
     private bool IsGameOver => _gameType == GameType.EightBall ? _game.GameOver : _snookerGame.FrameOver;
     private bool AiTurn => _aiLevel > 0 && CurrentPlayer == 1 && !IsGameOver;
+
+    /// <summary>
+    /// True when someone else owns the table — the AI, or the remote player in an
+    /// online match. Both cases suppress exactly the same local input, so they
+    /// share one guard rather than growing a parallel path.
+    /// </summary>
+    private bool Spectating => AiTurn ||
+        (_net is { IsOnline: true } && CurrentPlayer != _net.LocalSeat && !IsGameOver);
     private Snookering.Core.Ai.AiDifficulty AiDifficulty => (Snookering.Core.Ai.AiDifficulty)(_aiLevel - 1);
 
     public override void _Ready()
@@ -122,6 +143,9 @@ public partial class MatchController : Node3D
         _audio = new AudioManager { Name = "Audio" };
         AddChild(_audio);
 
+        _net = new Net.NetworkManager { Name = "Net" };
+        AddChild(_net);
+
         BuildHud();
 
         // Honour the saved graphics preset on startup, not only when the
@@ -132,6 +156,8 @@ public partial class MatchController : Node3D
         // "--break [power01]" fires a break immediately (harness verification).
         var args = OS.GetCmdlineUserArgs();
         var startType = GameType.EightBall;
+        var netHost = false;
+        string? netJoin = null;
         for (var i = 0; i < args.Length; i++)
         {
             if (args[i] == "--game" && i + 1 < args.Length && args[i + 1] == "snooker")
@@ -140,6 +166,10 @@ public partial class MatchController : Node3D
                 _aimPitch = Mathf.Clamp(Mathf.DegToRad(float.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture)), MinAimPitch, MaxAimPitch);
             if (args[i] == "--aimdist" && i + 1 < args.Length)
                 _aimDist = Mathf.Clamp(float.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture), 0.25f, 1.6f);
+            if (args[i] == "--host")
+                netHost = true;
+            if (args[i] == "--join" && i + 1 < args.Length)
+                netJoin = args[i + 1];
             if (args[i] == "--ai" && i + 1 < args.Length)
                 _aiLevel = Math.Clamp(int.Parse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture), 0, 3);
             if (args[i] == "--view" && i + 1 < args.Length && args[i + 1] == "top")
@@ -165,12 +195,40 @@ public partial class MatchController : Node3D
         if (args.Length > 0)
             _menu.Show(Ui.MenuLayer.Screen.None);
 
+        if (netHost)
+        {
+            GD.Print("[net] " + (_net.Host() is { Length: > 0 } e ? e : "hosting (CLI)"));
+            _menu.Show(Ui.MenuLayer.Screen.None);
+        }
+        else if (netJoin is not null)
+        {
+            GD.Print("[net] " + (_net.Join(netJoin) is { Length: > 0 } e2 ? e2 : $"joining {netJoin} (CLI)"));
+            _menu.Show(Ui.MenuLayer.Screen.None);
+        }
+
         StartRack(startType);
         UpdateCamera(0f);
         for (var i = 0; i < args.Length; i++)
         {
             if (args[i] == "--break")
             {
+                // Networked: wait for the opponent, otherwise the shot is fired
+                // into an empty match and never replicated.
+                if (netHost)
+                {
+                    var power = args.Length > i + 1 && float.TryParse(args[i + 1],
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var np)
+                        ? Mathf.Clamp(np, 0f, 1f) : 1f;
+                    _net.OpponentJoined += () =>
+                    {
+                        Rpc(MethodName.StartOnlineMatch, (int)startType, 0,
+                            Net.NetworkManager.ProtocolVersion);
+                        GetTree().CreateTimer(1.0).Timeout += () => { _power = power; Fire(); };
+                    };
+                    break;
+                }
+
                 _power = args.Length > i + 1 && float.TryParse(args[i + 1],
                     System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var p)
@@ -199,8 +257,8 @@ public partial class MatchController : Node3D
             case InputEventMouseButton mb:
                 if (mb.ButtonIndex == MouseButton.Left)
                 {
-                    if (AiTurn)
-                        break; // spectating: the AI owns aiming and placement
+                    if (Spectating)
+                        break; // the AI or the remote player owns aiming and placement
                     if (_mode == Mode.BallInHand)
                     {
                         if (mb.Pressed && _placementValid)
@@ -274,7 +332,7 @@ public partial class MatchController : Node3D
         const float step = 0.05f;
         switch (code)
         {
-            case Key.Space when _mode == Mode.Aiming && !IsGameOver && !AiTurn:
+            case Key.Space when _mode == Mode.Aiming && !IsGameOver && !Spectating:
                 _charging = true;
                 _power = 0f;
                 break;
@@ -327,13 +385,13 @@ public partial class MatchController : Node3D
     }
 
     /// <summary>(Re)build table, balls, and match state for the chosen game.</summary>
-    private void StartRack(GameType type)
+    private void StartRack(GameType type, int? breakingSeat = null)
     {
-        var winnerBreaks = type == _gameType
+        var winnerBreaks = breakingSeat ?? (type == _gameType
             ? _gameType == GameType.EightBall
                 ? (_game.GameOver && _game.Winner >= 0 ? _game.Winner : 0)
                 : (_snookerGame.FrameOver && _snookerGame.Winner >= 0 ? _snookerGame.Winner : 0)
-            : 0;
+            : 0);
 
         _gameType = type;
         _table = type == GameType.EightBall ? TableSpec.Pool9ft() : TableSpec.Snooker12ft();
@@ -393,7 +451,21 @@ public partial class MatchController : Node3D
             // Raising the cue makes the ball swerve; the core has always modelled
             // it, but every shot used to be sent perfectly level.
             ElevationCentiDeg = (short)Math.Round(_hud.ElevationDeg * 100f),
+            CuePlaceXMicroM = _pendingPlacement is { } p1 ? (int)Math.Round(p1.X * 1e6) : null,
+            CuePlaceYMicroM = _pendingPlacement is { } p2 ? (int)Math.Round(p2.Y * 1e6) : null,
         };
+
+        if (_net.IsOnline)
+        {
+            // CallLocal, so both peers enter the same funnel with the same struct.
+            Rpc(MethodName.SubmitShot,
+                shot.AimAngleMicroRad, shot.SpeedMmPerSec,
+                (int)shot.OffsetSide1e4, (int)shot.OffsetVert1e4, (int)shot.ElevationCentiDeg,
+                shot.CuePlaceXMicroM ?? 0, shot.CuePlaceYMicroM ?? 0, shot.HasCuePlacement,
+                _power);
+            return;
+        }
+
         FireInput(shot, _power);
     }
 
@@ -406,6 +478,7 @@ public partial class MatchController : Node3D
         var input = shot;
         _simTask = System.Threading.Tasks.Task.Run(() => Simulator.Run(state, input, table));
 
+        _shotIndex++;
         _firedPower = visualPower;
         _strikeT = 0f;
         _mode = Mode.Striking;
@@ -483,6 +556,174 @@ public partial class MatchController : Node3D
         }
     }
 
+    // ------------------------------------------------------------------ online
+
+    /// <summary>
+    /// Stream the aim while lining up, so the other player watches the cue move,
+    /// the spin dial change and the power meter swing instead of staring at a
+    /// still table until the shot suddenly happens. Sent unreliably a few times a
+    /// second: a dropped frame here costs nothing, and the shot itself is what
+    /// actually gets simulated.
+    /// </summary>
+    private void BroadcastAim(float dt)
+    {
+        if (!_net.IsOnline || Spectating || _mode != Mode.Aiming || !_net.OpponentPresent)
+            return;
+
+        _aimBroadcast += dt;
+        if (_aimBroadcast < 0.06f)
+            return;
+        _aimBroadcast = 0f;
+
+        Rpc(MethodName.AimUpdate, _aimAngle, _spinSide, _spinVert, _power,
+            _mode == Mode.BallInHand ? 0f : (float)_hud.ElevationDeg);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Unreliable)]
+    private void AimUpdate(float aim, float side, float vert, float power, float elevation)
+    {
+        if (!Spectating)
+            return; // never let a stale packet fight the player for their own cue
+        _aimAngle = aim;
+        _power = power;
+        SetSpin(side, vert);
+        _spectatedElevation = elevation;
+    }
+
+    /// <summary>
+    /// A shot arriving from either peer. Both sides run this — the sender via
+    /// CallLocal — so the two simulations start from the same struct at the same
+    /// point in the match.
+    /// </summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = true,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void SubmitShot(int aim, int speedMm, int side, int vert, int elevation,
+                            int placeX, int placeY, bool hasPlacement, float visualPower)
+    {
+        if (_mode is not (Mode.Aiming or Mode.BallInHand))
+        {
+            GD.PrintErr("[net] shot arrived while busy — ignoring");
+            return;
+        }
+
+        // Apply the placement to the table BEFORE the shot on both peers, so the
+        // pre-shot state the rules engine sees is identical on each side.
+        if (hasPlacement)
+        {
+            ref var cue = ref _state.Ball(0);
+            cue = BallState.AtRest(0, new CoreVec2(placeX * 1e-6, placeY * 1e-6));
+            SnapViews();
+        }
+
+        var shot = new ShotInput
+        {
+            AimAngleMicroRad = aim,
+            SpeedMmPerSec = speedMm,
+            OffsetSide1e4 = (short)side,
+            OffsetVert1e4 = (short)vert,
+            ElevationCentiDeg = (short)elevation,
+            CuePlaceXMicroM = hasPlacement ? placeX : null,
+            CuePlaceYMicroM = hasPlacement ? placeY : null,
+        };
+
+        _pendingPlacement = null;
+        _aimAngle = (float)shot.AimAngleRad; // so the cue animation points the right way
+        FireInput(shot, visualPower);
+    }
+
+    /// <summary>Host tells both peers to rack up. Racks are pure functions of the
+    /// table spec, so naming the game and the breaker is enough.</summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = true,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void StartOnlineMatch(int gameType, int breakingSeat, int protocolVersion)
+    {
+        if (protocolVersion != Net.NetworkManager.ProtocolVersion)
+        {
+            _message = "Version mismatch — both players need the same build.";
+            _net.Leave();
+            _menu.Show(Ui.MenuLayer.Screen.Main);
+            return;
+        }
+
+        _aiLevel = 0; // never run the AI in a networked match
+        StartRack((GameType)gameType, breakingSeat);
+        _menu.Show(Ui.MenuLayer.Screen.None);
+    }
+
+    /// <summary>
+    /// Guest reports what it computed. The physics hash alone is not enough: the
+    /// peers could agree on every ball and still disagree about whose turn it is.
+    /// </summary>
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void ReportState(int shotIndex, long physicsHash, long rulesHash)
+    {
+        if (_net.Current != Net.NetworkManager.Role.Host)
+            return;
+
+        // The guest can finish a shot slightly before the host does. Comparing
+        // against whatever the host happens to hold at that instant would flag a
+        // desync on every shot, so wait until the host has the same shot.
+        if (shotIndex != _shotIndex || _mode is Mode.Striking or Mode.Simulating or Mode.Playback)
+        {
+            _pendingReport = (shotIndex, (ulong)physicsHash, (ulong)rulesHash);
+            return;
+        }
+        CompareWithGuest(shotIndex, (ulong)physicsHash, (ulong)rulesHash);
+    }
+
+    private void CompareWithGuest(int shotIndex, ulong physicsHash, ulong rulesHash)
+    {
+        if (shotIndex != _shotIndex)
+            return;
+        if (physicsHash == _lastPhysicsHash && rulesHash == _lastRulesHash)
+        {
+            GD.Print($"[net] shot {shotIndex} agreed");
+            return;
+        }
+
+        GD.PrintErr($"[net] desync on shot {shotIndex} " +
+                    $"(physics {physicsHash == _lastPhysicsHash}, rules {rulesHash == _lastRulesHash})" +
+                    " — resyncing the guest from the host state");
+        Rpc(MethodName.AdoptHostState, PackBalls(), CurrentPlayer, _snookerBreak);
+    }
+
+    /// <summary>Last-resort authority: the guest takes the host's ball positions.</summary>
+    [Rpc(MultiplayerApi.RpcMode.Authority, CallLocal = false,
+         TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void AdoptHostState(double[] packed, int currentPlayer, int snookerBreak)
+    {
+        for (var i = 0; i < _state.Balls.Length && i * 3 + 2 < packed.Length; i++)
+        {
+            ref var b = ref _state.Balls[i];
+            b.Pos = new CoreVec2(packed[i * 3], packed[i * 3 + 1]);
+            b.Vel = CoreVec2.Zero;
+            b.AngVel = new Snookering.Core.Mathematics.Vec3(0, 0, 0);
+            b.State = MotionState.Stationary;
+            b.OnTable = packed[i * 3 + 2] > 0.5;
+        }
+        if (_gameType == GameType.EightBall)
+            _game.CurrentPlayer = currentPlayer;
+        else
+            _snookerGame.CurrentPlayer = currentPlayer;
+        _snookerBreak = snookerBreak;
+        _message = "Resynced with the host.";
+        SnapViews();
+    }
+
+    private double[] PackBalls()
+    {
+        var packed = new double[_state.Balls.Length * 3];
+        for (var i = 0; i < _state.Balls.Length; i++)
+        {
+            packed[i * 3] = _state.Balls[i].Pos.X;
+            packed[i * 3 + 1] = _state.Balls[i].Pos.Y;
+            packed[i * 3 + 2] = _state.Balls[i].OnTable ? 1.0 : 0.0;
+        }
+        return packed;
+    }
+
     /// <summary>Full-power straight break at the rack apex.</summary>
     private static Snookering.Core.Ai.AiShot PlanBreak(TableState state, TableSpec table, ulong seed)
     {
@@ -504,6 +745,7 @@ public partial class MatchController : Node3D
     private void FinishPlayback()
     {
         _audio.StopRolling();
+        _lastPhysicsHash = _result!.StateHash;
         _state = _result!.FinalState;
 
         bool ballInHand, inD = false, over;
@@ -527,6 +769,23 @@ public partial class MatchController : Node3D
             over = outcome.FrameOver;
         }
         _result = null;
+
+        _pendingPlacement = null;
+        _lastRulesHash = _gameType == GameType.EightBall
+            ? Snookering.Core.Rules.RulesHash.Of(_game)
+            : Snookering.Core.Rules.RulesHash.Of(_snookerGame);
+
+        if (_net.IsOnline)
+            GD.Print($"[net] shot {_shotIndex} physics={_lastPhysicsHash:X16} rules={_lastRulesHash:X16}");
+
+        // The guest reports; the host is the one that can rule on a mismatch.
+        if (_net.Current == Net.NetworkManager.Role.Guest)
+            RpcId(1, MethodName.ReportState, _shotIndex, (long)_lastPhysicsHash, (long)_lastRulesHash);
+        else if (_pendingReport is { } queued)
+        {
+            _pendingReport = null;
+            CompareWithGuest(queued.Shot, queued.Physics, queued.Rules);
+        }
 
         if (!over && ballInHand)
             EnterBallInHand(inD);
@@ -592,8 +851,13 @@ public partial class MatchController : Node3D
 
     private void ConfirmPlacement()
     {
+        // Quantize immediately: the position comes from a float camera raycast, and
+        // both peers must rebuild the identical double from the same integers.
+        var (qx, qy) = ShotInput.QuantizePlacement(_placement);
+        _pendingPlacement = new CoreVec2(qx * 1e-6, qy * 1e-6);
+
         ref var cue = ref _state.Ball(0);
-        cue = BallState.AtRest(0, _placement);
+        cue = BallState.AtRest(0, _pendingPlacement.Value);
         foreach (var v in _views)
             if (v.BallId == 0)
                 v.SetBaseColor(new Color(0.95f, 0.93f, 0.88f));
@@ -617,6 +881,7 @@ public partial class MatchController : Node3D
             _power = Mathf.PingPong((float)(_power + delta * 0.9), 1f);
 
         UpdateAi((float)delta);
+        BroadcastAim((float)delta);
 
         switch (_mode)
         {
@@ -651,7 +916,7 @@ public partial class MatchController : Node3D
                 break;
 
             case Mode.BallInHand:
-                if (!AiTurn)
+                if (!Spectating)
                     UpdatePlacement();
                 break;
         }
@@ -848,6 +1113,46 @@ public partial class MatchController : Node3D
         _menu.SwitchGameRequested += () =>
             StartRack(_gameType == GameType.EightBall ? GameType.Snooker : GameType.EightBall);
         _menu.MainMenuRequested += () => { };
+
+        _menu.HostRequested += () =>
+        {
+            var error = _net.Host();
+            _menu.SetOnlineStatus(error.Length > 0
+                ? error
+                : $"Hosting on port {Net.NetworkManager.DefaultPort}. Your friend joins with:  " +
+                  string.Join("  or  ", Net.NetworkManager.LocalAddresses()) +
+                  "\n(Over the internet: your Tailscale address, or forward that UDP port.)", false);
+        };
+
+        _menu.JoinRequested += address =>
+        {
+            var error = _net.Join(address);
+            _menu.SetOnlineStatus(error.Length > 0 ? error : $"Connecting to {address}…", false);
+        };
+
+        _menu.OnlineStartRequested += snooker =>
+        {
+            if (_net.Current != Net.NetworkManager.Role.Host)
+                return;
+            Rpc(MethodName.StartOnlineMatch, (int)(snooker ? GameType.Snooker : GameType.EightBall),
+                0, Net.NetworkManager.ProtocolVersion);
+        };
+
+        _menu.LeaveMatchRequested += () => _net.Leave();
+
+        _net.OpponentJoined += () => _menu.SetOnlineStatus(
+            _net.Current == Net.NetworkManager.Role.Host
+                ? "Opponent connected. Pick a game and start."
+                : "Connected. Waiting for the host to start…",
+            _net.Current == Net.NetworkManager.Role.Host);
+
+        _net.Disconnected += reason =>
+        {
+            _message = reason;
+            _menu.SetOnlineStatus(reason, false);
+            _menu.Show(Ui.MenuLayer.Screen.Main);
+        };
+        _net.Failed += reason => _menu.SetOnlineStatus(reason, false);
     }
 
     private void UpdateHud()
@@ -857,7 +1162,7 @@ public partial class MatchController : Node3D
             Snooker = _gameType == GameType.Snooker,
             CurrentPlayer = CurrentPlayer,
             GameOver = IsGameOver,
-            AiTurn = AiTurn,
+            AiTurn = Spectating,
             AiLabel = _aiLevel switch
             {
                 1 => "AI — easy",
@@ -867,9 +1172,11 @@ public partial class MatchController : Node3D
             },
             Power = _power,
             Charging = _charging,
-            ShowAimControls = _mode == Mode.Aiming && !AiTurn && !IsGameOver,
-            Message = AiTurn && _mode is Mode.Aiming or Mode.BallInHand
-                ? "Opponent is thinking…"
+            Online = _net.IsOnline,
+            LocalSeat = _net.IsOnline ? _net.LocalSeat : -1,
+            ShowAimControls = _mode == Mode.Aiming && !Spectating && !IsGameOver,
+            Message = Spectating && _mode is Mode.Aiming or Mode.BallInHand
+                ? (_net.IsOnline ? "Opponent is aiming…" : "Opponent is thinking…")
                 : _mode == Mode.BallInHand
                     ? "Ball in hand — click to place the cue ball"
                     : _message,
