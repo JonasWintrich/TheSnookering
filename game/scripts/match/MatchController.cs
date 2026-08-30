@@ -28,8 +28,8 @@ public partial class MatchController : Node3D
     private BallView[] _views = null!;
     private Camera3D _camera = null!;
     private CueView _cue = null!;
-    private Label _info = null!;
-    private ColorRect _powerFill = null!;
+    private Ui.Hud _hud = null!;
+    private Ui.MenuLayer _menu = null!;
 
     private Mode _mode = Mode.Aiming;
 
@@ -62,6 +62,7 @@ public partial class MatchController : Node3D
     private Vector3 _camPos;
     private Vector3 _camLook;
     private bool _camInitialized;
+    private float _menuYaw = -Mathf.Pi / 2f;
 
     // Shot input state.
     private float _spinSide;
@@ -83,6 +84,7 @@ public partial class MatchController : Node3D
     private EightBallGame _game = new();
     private SnookerRules? _snookerRules;
     private SnookerGame _snookerGame = new();
+    private int _snookerBreak;
     private string _message = "Player 1 to break";
 
     // Ball-in-hand placement (restrictedToD = snooker in-hand).
@@ -108,6 +110,8 @@ public partial class MatchController : Node3D
 
     public override void _Ready()
     {
+        Ui.GameSettings.Load();
+
         _camera = new Camera3D { Name = "MatchCamera", Fov = 55f };
         AddChild(_camera);
         _camera.MakeCurrent();
@@ -152,6 +156,11 @@ public partial class MatchController : Node3D
             }
         }
 
+        // Any CLI flag means we are being driven by the screenshot/state harness,
+        // so drop straight into the match instead of opening on the menu.
+        if (args.Length > 0)
+            _menu.Show(Ui.MenuLayer.Screen.None);
+
         StartRack(startType);
         UpdateCamera(0f);
         for (var i = 0; i < args.Length; i++)
@@ -173,6 +182,14 @@ public partial class MatchController : Node3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        // While a menu is up it owns the input, except for the key that closes it.
+        if (_menu is not null && _menu.Blocking)
+        {
+            if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
+                _menu.TogglePause();
+            return;
+        }
+
         switch (@event)
         {
             case InputEventMouseButton mb:
@@ -216,7 +233,7 @@ public partial class MatchController : Node3D
                 if (_aiming && InAimView)
                 {
                     // The camera hangs behind the cue, so turning the aim IS turning the view.
-                    _aimAngle -= mm.Relative.X * 0.002f * Mathf.Clamp(_aimDist / 0.6f, 0.4f, 1f);
+                    _aimAngle -= mm.Relative.X * 0.002f * Ui.GameSettings.AimSensitivity * Mathf.Clamp(_aimDist / 0.6f, 0.4f, 1f);
                     _aimPitch = Mathf.Clamp(_aimPitch + mm.Relative.Y * 0.003f, MinAimPitch, MaxAimPitch);
                 }
                 else if (_orbiting)
@@ -275,6 +292,12 @@ public partial class MatchController : Node3D
             case Key.G when _mode is Mode.Aiming or Mode.BallInHand:
                 StartRack(_gameType == GameType.EightBall ? GameType.Snooker : GameType.EightBall);
                 break;
+            case Key.Escape:
+                _menu.TogglePause();
+                break;
+            case Key.H:
+                _hud.ToggleHint();
+                break;
             case Key.P:
                 _aiLevel = (_aiLevel + 1) % 4;
                 _aiTask = null;
@@ -294,6 +317,9 @@ public partial class MatchController : Node3D
         }
         _spinSide = side;
         _spinVert = vert;
+        // Keep the dial in step when spin is set by key or cleared on a re-rack.
+        if (_hud is not null && (_hud.Spin.SpinSide != side || _hud.Spin.SpinVert != vert))
+            _hud.Spin.SetSpin(side, vert, notify: false);
     }
 
     /// <summary>(Re)build table, balls, and match state for the chosen game.</summary>
@@ -342,6 +368,7 @@ public partial class MatchController : Node3D
         _simTask = null;
         _mode = Mode.Aiming;
         _aimAngle = 0f;
+        _snookerBreak = 0;
         SetSpin(0f, 0f);
     }
 
@@ -479,7 +506,11 @@ public partial class MatchController : Node3D
         }
         else
         {
+            var shooter = _snookerGame.CurrentPlayer;
+            var scoreBefore = _snookerGame.Scores[shooter];
             var outcome = _snookerRules!.Apply(_snookerGame, _preShotState!, _result);
+            var gained = _snookerGame.Scores[shooter] - scoreBefore;
+            _snookerBreak = outcome.TurnContinues && gained > 0 ? _snookerBreak + gained : 0;
             _message = outcome.Message;
             ballInHand = outcome.BallInHandInD;
             inD = ballInHand;
@@ -696,7 +727,19 @@ public partial class MatchController : Node3D
     {
         Vector3 targetPos, targetLook;
 
-        if (InAimView)
+        // Menus drift slowly around the table so the backdrop is alive.
+        if (_menu is not null && _menu.Blocking)
+        {
+            _menuYaw += dt * 0.06f;
+            var menuOffset = new Vector3(
+                Mathf.Sin(_menuYaw) * Mathf.Cos(0.42f),
+                Mathf.Sin(0.42f),
+                Mathf.Cos(_menuYaw) * Mathf.Cos(0.42f)) * 2.5f;
+            targetPos = TableFocus + menuOffset;
+            targetPos.Y = Mathf.Clamp(targetPos.Y, MinOrbitHeight, MaxEyeHeight);
+            targetLook = TableFocus;
+        }
+        else if (InAimView)
         {
             // Low behind the cue ball, looking down the aim line.
             var ball = CueBallPosition();
@@ -761,91 +804,98 @@ public partial class MatchController : Node3D
             strike);
     }
 
-    // ------------------------------------------------------------------ HUD
+    // ------------------------------------------------------------------ HUD & menus
 
     private void BuildHud()
     {
-        var hud = new CanvasLayer { Name = "Hud" };
-        AddChild(hud);
+        _hud = new Ui.Hud { Name = "Hud" };
+        AddChild(_hud);
+        _hud.Spin.Changed += () => SetSpin(_hud.Spin.SpinSide, _hud.Spin.SpinVert);
 
-        _info = new Label
+        _menu = new Ui.MenuLayer { Name = "Menu" };
+        AddChild(_menu);
+        _menu.StartRequested += (snooker, ai) =>
         {
-            Position = new Vector2(16, 12),
-            MouseFilter = Control.MouseFilterEnum.Ignore,
+            _aiLevel = ai;
+            StartRack(snooker ? GameType.Snooker : GameType.EightBall);
         };
-        _info.AddThemeColorOverride("font_color", Colors.White);
-        hud.AddChild(_info);
-
-        var barBack = new ColorRect
-        {
-            Color = new Color(0f, 0f, 0f, 0.5f),
-            AnchorLeft = 0.3f,
-            AnchorRight = 0.7f,
-            AnchorTop = 1f,
-            AnchorBottom = 1f,
-            OffsetTop = -36,
-            OffsetBottom = -16,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        hud.AddChild(barBack);
-
-        _powerFill = new ColorRect
-        {
-            Color = new Color(0.95f, 0.55f, 0.1f),
-            AnchorRight = 0f,
-            AnchorBottom = 1f,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        barBack.AddChild(_powerFill);
+        _menu.RestartRequested += () => StartRack(_gameType);
+        _menu.SwitchGameRequested += () =>
+            StartRack(_gameType == GameType.EightBall ? GameType.Snooker : GameType.EightBall);
+        _menu.MainMenuRequested += () => { };
     }
 
     private void UpdateHud()
     {
-        _powerFill.AnchorRight = _power;
+        var state = new Ui.HudState
+        {
+            Snooker = _gameType == GameType.Snooker,
+            CurrentPlayer = CurrentPlayer,
+            GameOver = IsGameOver,
+            AiTurn = AiTurn,
+            AiLabel = _aiLevel switch
+            {
+                1 => "AI — easy",
+                2 => "AI — medium",
+                3 => "AI — hard",
+                _ => "",
+            },
+            Power = _power,
+            Charging = _charging,
+            ShowAimControls = _mode == Mode.Aiming && !AiTurn && !IsGameOver,
+            Message = AiTurn && _mode is Mode.Aiming or Mode.BallInHand
+                ? "Opponent is thinking…"
+                : _mode == Mode.BallInHand
+                    ? "Ball in hand — click to place the cue ball"
+                    : _message,
+        };
 
-        string players;
-        bool over;
         if (_gameType == GameType.EightBall)
         {
             string GroupName(int p) => _game.GroupOf(p) switch
             {
                 BallGroup.Solids => "solids",
                 BallGroup.Stripes => "stripes",
-                _ => "?",
+                _ => "",
             };
-            players = _game.OpenTable
-                ? $"8-BALL — open table — Player {_game.CurrentPlayer + 1}'s turn"
-                : $"8-BALL — P1 ({GroupName(0)}) vs P2 ({GroupName(1)}) — Player {_game.CurrentPlayer + 1}'s turn";
-            over = _game.GameOver;
+            state.OpenTable = _game.OpenTable;
+            state.GroupP1 = GroupName(0);
+            state.GroupP2 = GroupName(1);
+            state.RemainingP1 = RemainingIn(_game.GroupOf(0));
+            state.RemainingP2 = RemainingIn(_game.GroupOf(1));
         }
         else
         {
             var g = _snookerGame;
-            var target = g.ColorsPhase
-                ? $"on the {SnookerRules.ColorName(g.NextColorOn)}"
-                : g.ColorBallOn ? "on a color" : "on a red";
-            players = $"SNOOKER — P1 {g.Scores[0]} : {g.Scores[1]} P2 — Player {g.CurrentPlayer + 1} {target}";
-            over = g.FrameOver;
+            state.ScoreP1 = g.Scores[0];
+            state.ScoreP2 = g.Scores[1];
+            state.Break = _snookerBreak;
+            state.BallOn = g.ColorsPhase
+                ? SnookerRules.ColorName(g.NextColorOn)
+                : g.ColorBallOn ? "a colour" : "a red";
+            state.BallOnColor = g.ColorsPhase
+                ? BallView.SnookerColor(g.NextColorOn)
+                : g.ColorBallOn ? new Color(0.85f, 0.85f, 0.85f) : BallView.SnookerColor(1);
         }
 
-        var aiTag = _aiLevel switch
-        {
-            1 => "P2: AI (easy)",
-            2 => "P2: AI (medium)",
-            3 => "P2: AI (hard)",
-            _ => "P2: human",
-        };
+        _hud.Visible = !_menu.Blocking;
+        _hud.Update(in state);
+    }
 
-        var status = _mode switch
+    /// <summary>How many of a player's own balls are still on the table.</summary>
+    private int RemainingIn(BallGroup group)
+    {
+        if (group == BallGroup.None)
+            return 0;
+        var count = 0;
+        foreach (var b in _state.Balls)
         {
-            _ when over => $"GAME OVER — {_message}   [R] next rack   [G] switch game   [P] {aiTag}",
-            _ when AiTurn && _mode is Mode.Aiming or Mode.BallInHand => $"{_message} — {aiTag} is thinking…",
-            Mode.Aiming => $"{_message}   |   spin side={_spinSide:F2} vert={_spinVert:F2}   [LMB drag] aim  [wheel] zoom  [arrows] spin  [Space] power  [R] re-rack  [G] switch game  [P] {aiTag}",
-            Mode.BallInHand => $"{_message} — move the mouse to place the cue ball, click to confirm",
-            Mode.Striking or Mode.Simulating => "STRIKE",
-            _ => "...",
-        };
-
-        _info.Text = $"{players}\n{status}";
+            if (!b.OnTable || b.Id == 0 || b.Id == 8)
+                continue;
+            var solid = b.Id is >= 1 and <= 7;
+            if ((group == BallGroup.Solids) == solid)
+                count++;
+        }
+        return count;
     }
 }
