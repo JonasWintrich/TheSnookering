@@ -45,6 +45,7 @@ public static class Simulator
             StepTick(balls, table, p, time, events);
             time += Dt;
             tick++;
+            CaptureEscapees(balls, table, time, events);
 
             for (var i = 0; i < balls.Length; i++)
                 hash = Fnv1A.Add(hash, in balls[i]);
@@ -64,6 +65,50 @@ public static class Simulator
             StateHash = hash,
             Duration = time,
         };
+    }
+
+    /// <summary>
+    /// Containment invariant. A ball's centre can only pass outside the playfield
+    /// rectangle through a pocket mouth — the cushions stop it everywhere else —
+    /// so once it is half a radius beyond that line it is in the pocket and not
+    /// coming back. Without this, a ball that threads a mouth without clipping a
+    /// jaw or reaching the fall circle leaves the table entirely, and the rules
+    /// engine then adjudicates a state that cannot physically exist.
+    ///
+    /// The margin is what preserves jaw rattles: a ball bouncing in the jaws is
+    /// still inside or barely past the line, and stays in play.
+    /// </summary>
+    private static void CaptureEscapees(BallState[] balls, TableSpec table, double time, List<SimEvent> events)
+    {
+        var margin = table.Physics.R * 0.5;
+        for (var i = 0; i < balls.Length; i++)
+        {
+            ref var ball = ref balls[i];
+            if (!ball.OnTable)
+                continue;
+            if (Math.Abs(ball.Pos.X) <= table.HalfLength + margin &&
+                Math.Abs(ball.Pos.Y) <= table.HalfWidth + margin)
+                continue;
+
+            short pocketId = 0;
+            var nearest = double.MaxValue;
+            for (var k = 0; k < table.Pockets.Count; k++)
+            {
+                var d = (table.Pockets[k].FallCenter - ball.Pos).LengthSquared;
+                if (d < nearest)
+                {
+                    nearest = d;
+                    pocketId = table.Pockets[k].Id;
+                }
+            }
+
+            var speed = ball.Vel.Length;
+            ball.OnTable = false;
+            ball.Vel = Vec2.Zero;
+            ball.AngVel = Vec3.Zero;
+            ball.State = MotionState.Stationary;
+            events.Add(new SimEvent(time, SimEventType.Pocketed, ball.Id, ball.Id, pocketId, speed));
+        }
     }
 
     private static void StepTick(BallState[] balls, TableSpec table, PhysicsParams p, double tickStart, List<SimEvent> events)
