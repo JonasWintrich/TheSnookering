@@ -16,3 +16,8 @@ TestResults/
 # Output artifacts
 out/
 *.png.import.tmp
+
+# Exported builds and downloaded export templates
+out/
+tools/downloads/templates.tpz
+tools/downloads/tpl/

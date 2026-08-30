@@ -29,6 +29,26 @@ dotnet build Snookering.slnx                      # builds Core + game assembly 
 "$GODOT" --path game --headless -- --dump-state "<ABSOLUTE path>.json" --frame 5
 ```
 
+Two-instance multiplayer test (the peers must agree on every shot hash):
+
+```bash
+"$GODOT" --path game -- --host --break 0.9 &     # peer A, fires once the guest joins
+"$GODOT" --path game -- --join 127.0.0.1         # peer B
+# both logs must show identical "[net] shot N physics=... rules=..." lines
+```
+
+Windows build. Two prerequisites, both easy to trip over:
+export templates must be installed in `%APPDATA%/Godot/export_templates/4.7.2.stable.mono/`
+(the `.tpz` from the same godot-builds release, unzipped), and **`game/Snookering.Game.sln`
+must exist** — Godot's .NET exporter looks for a classic solution named after the
+assembly beside the project, and does not read the root `Snookering.slnx`. Without it
+the export still produces an .exe, but with no managed assemblies, so the game silently
+does nothing:
+
+```bash
+"$GODOT" --path game --headless --export-release "Windows Desktop" ../out/build/Snookering.exe
+```
+
 Harness flags (parsed by `game/scripts/debug/DebugAutoload.cs`, always after `--`): `--screenshot <path>`, `--dump-state <path>` (positions of nodes in group `balls`), `--frame <N>` (frames to wait; give TAA/GI ~45 to settle), `--quit-after <N>`. Paths must be absolute — Godot's cwd differs.
 
 If Godot is missing from `tools/`, re-download: `Godot_v4.7.2-stable_mono_win64.zip` from github.com/godotengine/godot-builds releases, extract into `tools/godot/`.
@@ -56,6 +76,18 @@ Run `--headless --import` after regenerating any asset. Hero GLB material names
 (Cloth/CushionCloth/Wood/DarkWood/Leather/Hole) are a contract: TableBuilder
 remaps them to runtime materials by name; the procedural table remains as the
 fallback when the GLBs are absent.
+
+## Multiplayer (implemented)
+
+Deterministic lockstep over ENet: peers exchange one `ShotInput` per shot and
+re-simulate. `ShotInput` carries the ball-in-hand placement, so **one turn is one
+message** and a shot is fully described by its input. Both peers cross-check two
+hashes per shot — `ShotResult.StateHash` (physics) and `RulesHash` (turn, groups,
+scores); the physics hash alone cannot catch a rules divergence. Comparison is
+keyed by shot index, because the guest can finish a shot before the host does.
+The AI never runs online: `DeterministicRng.NextGaussian` uses libm
+transcendentals, the only place two machines could legitimately differ.
+Player-facing setup instructions are in `MULTIPLAYER.md`.
 
 ## Architecture — the one rule that matters
 
