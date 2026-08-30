@@ -364,6 +364,8 @@ public partial class MatchController : Node3D
         }
         SnapViews();
 
+        _audio.SetTable(_table);
+
         _result = null;
         _simTask = null;
         _mode = Mode.Aiming;
@@ -494,6 +496,7 @@ public partial class MatchController : Node3D
 
     private void FinishPlayback()
     {
+        _audio.StopRolling();
         _state = _result!.FinalState;
 
         bool ballInHand, inD = false, over;
@@ -651,6 +654,8 @@ public partial class MatchController : Node3D
         UpdateHud();
     }
 
+    private readonly System.Collections.Generic.List<(Vector3 Pos, float Speed)> _movers = new();
+
     private void ApplyPlayback(float dt)
     {
         var frames = _result!.Frames;
@@ -671,7 +676,19 @@ public partial class MatchController : Node3D
                 a.AngVel,
                 a.OnTable && b.OnTable);
             _views[i].Apply(in lerped, dt);
+
+            if (lerped.OnTable && interval > 0.0)
+            {
+                var speed = (float)((b.Pos - a.Pos).Length / interval);
+                if (speed > 0.12f)
+                    _movers.Add((_views[i].Position, speed));
+            }
         }
+
+        // Loudest few rolling balls get a voice; the rest are inaudible anyway.
+        _movers.Sort((x, y) => y.Speed.CompareTo(x.Speed));
+        _audio.UpdateRolling(_movers, dt);
+        _movers.Clear();
     }
 
     /// <summary>Fire the sound of every sim event whose time playback has just passed.</summary>
@@ -777,6 +794,7 @@ public partial class MatchController : Node3D
 
         _camera.Position = _camPos;
         _camera.LookAt(_camLook, Vector3.Up);
+        AudioBuses.SetListenerDistance(_camPos.DistanceTo(TableFocus));
 
         // Steep top-down table view: cull the lamp shades so they don't block the
         // view (their lights keep shining — only the meshes vanish).

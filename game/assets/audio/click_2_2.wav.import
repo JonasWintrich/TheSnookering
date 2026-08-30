@@ -2,13 +2,13 @@
 
 importer="wav"
 type="AudioStreamWAV"
-uid="uid://5qqtfv0pme1r"
-path="res://.godot/imported/cushion.wav-7ec4d175516fcfd8ba25612258ccc216.sample"
+uid="uid://ckhirkaumlgj6"
+path="res://.godot/imported/click_2_2.wav-0c56b3fd0f4b74fbbb0f5bed79c6b208.sample"
 
 [deps]
 
-source_file="res://assets/audio/cushion.wav"
-dest_files=["res://.godot/imported/cushion.wav-7ec4d175516fcfd8ba25612258ccc216.sample"]
+source_file="res://assets/audio/click_2_2.wav"
+dest_files=["res://.godot/imported/click_2_2.wav-0c56b3fd0f4b74fbbb0f5bed79c6b208.sample"]
 
 [params]
 

@@ -36,12 +36,21 @@ If Godot is missing from `tools/`, re-download: `Godot_v4.7.2-stable_mono_win64.
 Asset regeneration (all procedural, deterministic):
 
 ```bash
-python tools/gen_ball_textures.py        # pool ball albedos -> game/assets/balls/
-python tools/gen_audio.py                # synthesized WAVs -> game/assets/audio/
+python tools/gen_ball_textures.py        # ball albedos (pool + snooker) -> game/assets/balls/
+python tools/gen_audio.py                # synthesized WAVs -> game/assets/audio/ (~11 s, 67 files)
+python tools/analyze_audio.py            # objective checks on the generated audio
 dotnet run --project src/Snookering.Tools -- dump-tables tools/tables.json   # physics geometry as JSON
 "/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" --background \
   --python tools/make_table.py -- tools/tables.json game/assets/models      # hero table GLBs
 ```
+
+Audio is synthesized from physics, not sampled: impacts use the Hertzian contact
+pulse (dF/dt), so contact time — and therefore brightness — follows impact speed.
+Each family is baked at three reference speeds ("tiers") with several variants;
+`AudioManager` crossfades neighbouring tiers and picks variants by a hash of the
+sim event, so a replayed shot sounds identical. `analyze_audio.py` asserts the
+claims that cannot be checked by ear here (brightness rises with speed, the cue
+is darker than a ball click, cushions have no click attack, loops do not drone).
 
 Run `--headless --import` after regenerating any asset. Hero GLB material names
 (Cloth/CushionCloth/Wood/DarkWood/Leather/Hole) are a contract: TableBuilder
