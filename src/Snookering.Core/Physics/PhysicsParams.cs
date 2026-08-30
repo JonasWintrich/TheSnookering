@@ -31,13 +31,13 @@ public sealed record PhysicsParams
     public double BallBallFriction { get; init; } = 0.05;
 
     /// <summary>Cushion normal restitution at vanishing speed (curve intercept).</summary>
-    public double CushionRestitutionBase { get; init; } = 0.86;
+    public double CushionRestitutionBase { get; init; } = 0.78;
 
     /// <summary>Restitution lost per m/s of normal approach speed.</summary>
-    public double CushionRestitutionFalloff { get; init; } = 0.026;
+    public double CushionRestitutionFalloff { get; init; } = 0.030;
 
     /// <summary>Floor for the restitution curve, reached on very hard impacts.</summary>
-    public double CushionRestitutionMin { get; init; } = 0.60;
+    public double CushionRestitutionMin { get; init; } = 0.52;
 
     /// <summary>
     /// Real cushion rubber is less elastic the harder it is compressed, so a

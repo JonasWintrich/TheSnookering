@@ -124,6 +124,10 @@ public partial class MatchController : Node3D
 
         BuildHud();
 
+        // Honour the saved graphics preset on startup, not only when the
+        // dropdown is touched.
+        Ui.GameSettings.ApplyGraphics(GetViewport().World3D.Environment);
+
         // CLI test hooks: "--game snooker|8ball" selects the game,
         // "--break [power01]" fires a break immediately (harness verification).
         var args = OS.GetCmdlineUserArgs();
@@ -372,6 +376,7 @@ public partial class MatchController : Node3D
         _aimAngle = 0f;
         _snookerBreak = 0;
         SetSpin(0f, 0f);
+        _hud?.ResetElevation();
     }
 
     // ------------------------------------------------------------------ shot flow
@@ -385,7 +390,9 @@ public partial class MatchController : Node3D
             SpeedMmPerSec = (int)Math.Round(speed * 1e3),
             OffsetSide1e4 = (short)Math.Round(_spinSide * 1e4),
             OffsetVert1e4 = (short)Math.Round(_spinVert * 1e4),
-            ElevationCentiDeg = 0,
+            // Raising the cue makes the ball swerve; the core has always modelled
+            // it, but every shot used to be sent perfectly level.
+            ElevationCentiDeg = (short)Math.Round(_hud.ElevationDeg * 100f),
         };
         FireInput(shot, _power);
     }

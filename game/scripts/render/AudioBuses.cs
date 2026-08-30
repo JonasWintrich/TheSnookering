@@ -51,11 +51,13 @@ public static class AudioBuses
         var sfx = Add(Sfx, "Master");
         AudioServer.AddBusEffect(sfx, new AudioEffectCompressor
         {
-            Threshold = -14f,
-            Ratio = 3.5f,
-            AttackUs = 1500f,
-            ReleaseMs = 90f,
-            Gain = 3f,
+            // Gentle glue only. The old +3 dB make-up drove the limiter and was
+            // part of why a break turned to mush.
+            Threshold = -10f,
+            Ratio = 2.5f,
+            AttackUs = 2500f,
+            ReleaseMs = 120f,
+            Gain = 0f,
         });
 
         var impacts = Add(Impacts, Sfx);
@@ -81,10 +83,10 @@ public static class AudioBuses
         };
         AudioServer.AddBusEffect(impacts, ImpactReverb);
 
-        var roll = Add(Roll, Sfx, -4f);
+        var roll = Add(Roll, Sfx, -6f);
         AudioServer.AddBusEffect(roll, new AudioEffectLowPassFilter { CutoffHz = 7500f, Resonance = 0.4f });
 
-        Add(Ambience, "Master", -20f);
+        Add(Ambience, "Master", 0f); // the bed is already quiet at source
     }
 
     /// <summary>

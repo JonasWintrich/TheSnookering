@@ -18,6 +18,19 @@ public partial class AudioManager : Node3D
     private const int VoiceCount = 28;
     private const int RollVoices = 4;
 
+    /// <summary>
+    /// Per-family headroom. A break fires a dozen clicks inside a few hundred
+    /// milliseconds, so they need the most room; the cue strike is a single
+    /// close sound and can sit forward.
+    /// </summary>
+    private static float FamilyGainDb(string family) => family switch
+    {
+        "click" => -7f,
+        "cue" => -1f,
+        "cushion_rail" or "cushion_jaw" => -4f,
+        _ => -4f,
+    };
+
     private static readonly float[] ClickTiers = { 0.6f, 2.2f, 6.0f };
     private static readonly float[] CueTiers = { 1.5f, 4.0f, 7.5f };
     private static readonly float[] CushionTiers = { 0.8f, 2.5f, 5.5f };
@@ -214,7 +227,8 @@ public partial class AudioManager : Node3D
 
         // Radiated energy grows roughly as v^0.9 in amplitude; the floor keeps a
         // feather-touch kiss audible instead of silent.
-        var db = Mathf.Clamp(20f * (float)System.Math.Log10(speed / tiers[lo]) * 0.9f, -34f, 6f);
+        var db = Mathf.Clamp(20f * (float)System.Math.Log10(speed / tiers[lo]) * 0.9f, -30f, 2f)
+                 + FamilyGainDb(family);
 
         if (1f - f > 0.02f)
             Play(family, lo, in e, pos, db + Mathf.LinearToDb(Mathf.Sqrt(1f - f)), 1f);

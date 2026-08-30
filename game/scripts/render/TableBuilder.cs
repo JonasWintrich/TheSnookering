@@ -17,6 +17,39 @@ public static class TableBuilder
     private const float RailWidth = 0.14f;
     private const float FrameTop = CushionHeight + 0.002f;
 
+    private const string ClothDir = "res://assets/textures/cloth/";
+
+    private static Texture2D ClothNormal()
+    {
+        if (ResourceLoader.Exists(ClothDir + "normal.jpg"))
+            return GD.Load<Texture2D>(ClothDir + "normal.jpg");
+        return new NoiseTexture2D
+        {
+            Noise = new FastNoiseLite { Frequency = 0.35f, NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth },
+            AsNormalMap = true,
+            BumpStrength = 1.6f,
+            Width = 256,
+            Height = 256,
+            Seamless = true,
+        };
+    }
+
+    /// <summary>Apply the woven-cloth albedo and roughness maps when present.</summary>
+    private static void ApplyClothMaps(StandardMaterial3D mat)
+    {
+        if (!ResourceLoader.Exists(ClothDir + "color.jpg"))
+            return;
+        mat.AlbedoTexture = GD.Load<Texture2D>(ClothDir + "color.jpg");
+        if (ResourceLoader.Exists(ClothDir + "roughness.jpg"))
+        {
+            mat.RoughnessTexture = GD.Load<Texture2D>(ClothDir + "roughness.jpg");
+            mat.Roughness = 1f;
+        }
+        // The scan is a neutral fabric, so the green comes from the albedo tint.
+        mat.AlbedoColor = new Color(mat.AlbedoColor.R * 2.6f, mat.AlbedoColor.G * 2.6f,
+                                    mat.AlbedoColor.B * 2.6f, 1f);
+    }
+
     public static Node3D Build(TableSpec spec)
     {
         var root = new Node3D { Name = "Table" };
@@ -42,15 +75,7 @@ public static class TableBuilder
         }
 
         // ---- materials -----------------------------------------------------
-        var feltNoise = new NoiseTexture2D
-        {
-            Noise = new FastNoiseLite { Frequency = 0.35f, NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth },
-            AsNormalMap = true,
-            BumpStrength = 1.6f,
-            Width = 256,
-            Height = 256,
-            Seamless = true,
-        };
+        var feltNoise = ClothNormal();
         var cloth = new StandardMaterial3D
         {
             AlbedoColor = new Color(0.045f, 0.36f, 0.15f),
@@ -292,15 +317,7 @@ public static class TableBuilder
 
     private static System.Collections.Generic.Dictionary<string, Material> RuntimeMaterials(bool snooker = false)
     {
-        var feltNoise = new NoiseTexture2D
-        {
-            Noise = new FastNoiseLite { Frequency = 0.35f, NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth },
-            AsNormalMap = true,
-            BumpStrength = 1.6f,
-            Width = 256,
-            Height = 256,
-            Seamless = true,
-        };
+        var feltNoise = ClothNormal();
         var cloth = new StandardMaterial3D
         {
             // Snooker cloth runs a deeper tournament green than pool cloth.
@@ -312,8 +329,10 @@ public static class TableBuilder
             NormalScale = 0.5f,
             Uv1Scale = new Vector3(14f, 14f, 1f),
         };
+        ApplyClothMaps(cloth);
         var cushion = (StandardMaterial3D)cloth.Duplicate();
         cushion.AlbedoColor = snooker ? new Color(0.022f, 0.27f, 0.09f) : new Color(0.04f, 0.33f, 0.135f);
+        ApplyClothMaps(cushion);
 
         // The model's pool head-string line: shown on pool, hidden (plain cloth)
         // on snooker — snooker draws its own baulk line, D and spots.

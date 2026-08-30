@@ -34,6 +34,13 @@ public partial class Hud : CanvasLayer
 {
     public SpinWidget Spin { get; private set; } = null!;
 
+    /// <summary>Cue elevation in degrees (0 = level). Raising the butt makes the
+    /// cue ball swerve, which the physics core has always modelled.</summary>
+    public float ElevationDeg => (float)_elevation.Value;
+
+    private HSlider _elevation = null!;
+    private Label _elevationLabel = null!;
+
     private PanelContainer _cardP1 = null!, _cardP2 = null!;
     private Label _nameP1 = null!, _nameP2 = null!;
     private Label _detailP1 = null!, _detailP2 = null!;
@@ -43,6 +50,7 @@ public partial class Hud : CanvasLayer
     private ColorRect _powerFill = null!;
     private Control _powerMarker = null!;
     private Control _aimPanel = null!;
+    private PanelContainer _hintFrame = null!;
     private bool _hintVisible = true;
 
     public override void _Ready()
@@ -59,7 +67,7 @@ public partial class Hud : CanvasLayer
     public void ToggleHint()
     {
         _hintVisible = !_hintVisible;
-        _hint.Visible = _hintVisible;
+        _hintFrame.Visible = _hintVisible;
     }
 
     // ------------------------------------------------------------------ build
@@ -174,7 +182,7 @@ public partial class Hud : CanvasLayer
         panel.SetAnchorsPreset(Control.LayoutPreset.BottomRight);
         panel.OffsetLeft = -168;
         panel.OffsetRight = -18;
-        panel.OffsetTop = -196;
+        panel.OffsetTop = -258;
         panel.OffsetBottom = -18;
         AddChild(panel);
         _aimPanel = panel;
@@ -186,15 +194,49 @@ public partial class Hud : CanvasLayer
         col.AddChild(UiTheme.MakeLabel("SPIN", 11, UiTheme.TextDim, HorizontalAlignment.Center));
         Spin = new SpinWidget();
         col.AddChild(Spin);
+
+        _elevationLabel = UiTheme.MakeLabel("CUE LEVEL", 11, UiTheme.TextDim, HorizontalAlignment.Center);
+        col.AddChild(_elevationLabel);
+        _elevation = new HSlider
+        {
+            MinValue = 0,
+            MaxValue = 15,
+            Step = 1,
+            Value = 0,
+            CustomMinimumSize = new Vector2(0, 22),
+            TooltipText = "Raise the butt of the cue to swerve around a blocking ball",
+        };
+        _elevation.ValueChanged += _ => UpdateElevationCaption();
+        col.AddChild(_elevation);
+    }
+
+    private void UpdateElevationCaption()
+    {
+        var deg = (int)_elevation.Value;
+        _elevationLabel.Text = deg == 0 ? "CUE LEVEL" : $"CUE RAISED {deg}°";
+        _elevationLabel.AddThemeColorOverride("font_color", deg == 0 ? UiTheme.TextDim : UiTheme.Accent);
+    }
+
+    public void ResetElevation()
+    {
+        _elevation.Value = 0;
+        UpdateElevationCaption();
     }
 
     private void BuildHint()
     {
-        _hint = UiTheme.MakeLabel("", 12, UiTheme.TextDim);
-        _hint.SetAnchorsPreset(Control.LayoutPreset.BottomLeft);
-        _hint.OffsetLeft = 18;
-        _hint.OffsetTop = -78;
-        AddChild(_hint);
+        // On a bright cloth the bare text was unreadable, so it gets its own panel.
+        var frame = UiTheme.MakePanel(new Color(0.03f, 0.03f, 0.04f, 0.55f));
+        frame.SetAnchorsPreset(Control.LayoutPreset.BottomLeft);
+        frame.OffsetLeft = 14;
+        frame.OffsetTop = -92;
+        frame.OffsetBottom = -14;
+        frame.MouseFilter = Control.MouseFilterEnum.Ignore;
+        AddChild(frame);
+
+        _hint = UiTheme.MakeLabel("", 12, UiTheme.Text);
+        frame.AddChild(_hint);
+        _hintFrame = frame;
         _hint.Text =
             "[LMB drag] aim     [RMB drag] look     [wheel] zoom\n" +
             "[Space] hold & release to shoot     [drag the ball] spin\n" +

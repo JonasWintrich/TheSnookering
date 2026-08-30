@@ -137,10 +137,16 @@ def db(x: float) -> float:
     return 10.0 ** (x / 20.0)
 
 
-def write_wav(name: str, samples: list[float], peak: float = 0.92) -> None:
+def write_wav(name: str, samples: list[float], peak: float = 0.90,
+              rms_db: float | None = None) -> None:
+    """Transients are peak-normalised (they need the headroom); sustained beds
+    are normalised by RMS, because that is what the ear actually weighs."""
     os.makedirs(OUT, exist_ok=True)
     hi = max(1e-9, max(abs(s) for s in samples))
     scale = peak / hi
+    if rms_db is not None:
+        rms = math.sqrt(sum(x * x for x in samples) / len(samples)) or 1e-9
+        scale = min(scale, (10.0 ** (rms_db / 20.0)) / rms)
     path = os.path.join(OUT, name)
     with wave.open(path, "wb") as w:
         w.setnchannels(1)
@@ -197,7 +203,7 @@ def click(v: float, rng: random.Random, ball_mode: float = 19030.0) -> list[floa
             crack[i] *= (math.sin(x) ** 2) if 0.0 <= x <= math.pi else 0.0
         mix(out, norm(crack), db(-24.0) * ((v / 4.0 - 1.0) ** 0.7))
 
-    add_table(out, pulse, rng, db(-26.0))
+    add_table(out, pulse, rng, db(-20.0))
 
     # The ball's own mode really is up at ~19 kHz — a faint glassy sheen only.
     ring = zeros(n)
@@ -403,21 +409,21 @@ def main() -> None:
         for tier, v in enumerate(CUSHION_TIERS):
             for variant in range(4):
                 rng = random.Random(3000 + (0 if kind == "rail" else 500) + tier * 10 + variant)
-                write_wav(f"cushion_{kind}_{tier}_{variant}.wav", cushion(v, rng, jaw))
+                write_wav(f"cushion_{kind}_{tier}_{variant}.wav", cushion(v, rng, jaw), rms_db=-30.0)
 
     for variant in range(4):
         rng = random.Random(4000 + variant)
-        write_wav(f"pocket_catch_{variant}.wav", pocket_catch(rng, net=False))
+        write_wav(f"pocket_catch_{variant}.wav", pocket_catch(rng, net=False), rms_db=-28.0)
     for variant in range(3):
         rng = random.Random(4500 + variant)
-        write_wav(f"pocket_net_{variant}.wav", pocket_catch(rng, net=True))
+        write_wav(f"pocket_net_{variant}.wav", pocket_catch(rng, net=True), rms_db=-30.0)
     for variant in range(3):
         rng = random.Random(5000 + variant)
-        write_wav(f"pocket_return_{variant}.wav", pocket_return(rng))
+        write_wav(f"pocket_return_{variant}.wav", pocket_return(rng), rms_db=-34.0)
 
-    write_wav("roll_loop.wav", roll_loop(random.Random(6000), sliding=False), peak=0.7)
-    write_wav("slide_loop.wav", roll_loop(random.Random(6100), sliding=True), peak=0.7)
-    write_wav("ambience.wav", ambience(random.Random(7000)), peak=0.55)
+    write_wav("roll_loop.wav", roll_loop(random.Random(6000), sliding=False), rms_db=-42.0)
+    write_wav("slide_loop.wav", roll_loop(random.Random(6100), sliding=True), rms_db=-38.0)
+    write_wav("ambience.wav", ambience(random.Random(7000)), rms_db=-50.0)
 
 
 if __name__ == "__main__":
