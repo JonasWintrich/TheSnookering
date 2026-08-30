@@ -45,6 +45,7 @@ public static class Simulator
             StepTick(balls, table, p, time, events);
             time += Dt;
             tick++;
+            ResolvePenetrations(balls, table, p, time, events);
             CaptureEscapees(balls, table, time, events);
 
             for (var i = 0; i < balls.Length; i++)
@@ -65,6 +66,94 @@ public static class Simulator
             StateHash = hash,
             Duration = time,
         };
+    }
+
+    /// <summary>
+    /// Push balls back out of any cushion they have sunk into.
+    ///
+    /// Ball-ball separation moves balls apart without knowing about cushions, so a
+    /// ball squeezed against a rail inside a tight pack gets shoved into it. Once
+    /// its centre is closer to the face than one radius, <see cref="Collisions.BallSegmentToi"/>
+    /// stops reporting that cushion at all — it only considers approaches from the
+    /// playfield side — and from then on the ball travels straight through the
+    /// rail. This pass is what keeps the table solid.
+    ///
+    /// Pocket mouths are unaffected: there is no cushion segment spanning them, so
+    /// a ball on its way into a pocket is never pushed back out.
+    /// </summary>
+    private static void ResolvePenetrations(BallState[] balls, TableSpec table, PhysicsParams p, double time, List<SimEvent> events)
+    {
+        var r = p.R;
+        for (var i = 0; i < balls.Length; i++)
+        {
+            ref var ball = ref balls[i];
+            if (!ball.OnTable)
+                continue;
+
+            for (var s = 0; s < table.Cushions.Count; s++)
+            {
+                var seg = table.Cushions[s];
+                var signed = (ball.Pos - seg.A).Dot(seg.N);
+                var depth = r - signed;
+                if (depth <= 0.0)
+                    continue;
+
+                // Only when the contact really lies on this segment; past its ends
+                // the nose test below (or the open pocket mouth) applies instead.
+                var foot = ball.Pos - signed * seg.N;
+                var along = (foot - seg.A).Dot(seg.Dir);
+                if (along < 0.0 || along > seg.Length)
+                    continue;
+
+                ball.Pos += depth * seg.N;
+                PushOff(ref ball, seg.N, p, seg.FeatureId, time, events);
+            }
+
+            for (var s = 0; s < table.Cushions.Count; s++)
+            {
+                var seg = table.Cushions[s];
+                PushOffPoint(ref ball, seg.A, r, p, seg.FeatureId, time, events);
+                PushOffPoint(ref ball, seg.B, r, p, seg.FeatureId, time, events);
+            }
+
+            for (var j = 0; j < table.Jaws.Count; j++)
+            {
+                var arc = table.Jaws[j];
+                var d = ball.Pos - arc.Center;
+                var dist = d.Length;
+                var minimum = arc.Radius + r;
+                if (dist >= minimum || dist <= 1e-9)
+                    continue;
+                var n = d / dist;
+                if (!arc.ContainsDirection(n))
+                    continue;
+
+                ball.Pos += (minimum - dist) * n;
+                PushOff(ref ball, n, p, arc.FeatureId, time, events);
+            }
+        }
+    }
+
+    private static void PushOffPoint(ref BallState ball, Vec2 point, double r, PhysicsParams p,
+        short featureId, double time, List<SimEvent> events)
+    {
+        var d = ball.Pos - point;
+        var dist = d.Length;
+        if (dist >= r || dist <= 1e-9)
+            return;
+        var n = d / dist;
+        ball.Pos += (r - dist) * n;
+        PushOff(ref ball, n, p, featureId, time, events);
+    }
+
+    private static void PushOff(ref BallState ball, Vec2 normal, PhysicsParams p,
+        short featureId, double time, List<SimEvent> events)
+    {
+        if (ball.Vel.Dot(normal) >= 0.0)
+            return; // already leaving; the position fix is enough
+        var speed = Collisions.ResolveCushion(ref ball, normal, p);
+        if (speed > 0.0)
+            events.Add(new SimEvent(time, SimEventType.Cushion, ball.Id, ball.Id, featureId, speed));
     }
 
     /// <summary>
