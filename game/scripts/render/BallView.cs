@@ -108,7 +108,12 @@ public partial class BallView : MeshInstance3D
         var w = SimWorld.ToWorld(sample.AngVel);
         var speed = w.Length();
         if (speed > 1e-4f && dt > 0f)
+        {
             GlobalRotate(w / speed, speed * dt);
+            // Thousands of incremental rotations per shot accumulate float error and
+            // would visibly shear the ball; renormalise every frame.
+            Basis = Basis.Orthonormalized();
+        }
     }
 
     /// <summary>Snap to a state sample without animation (rack setup, ball-in-hand).</summary>

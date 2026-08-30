@@ -30,8 +30,25 @@ public sealed record PhysicsParams
     /// <summary>Ball-ball tangential Coulomb friction — produces throw and spin transfer.</summary>
     public double BallBallFriction { get; init; } = 0.05;
 
-    /// <summary>Cushion normal restitution.</summary>
-    public double CushionRestitution { get; init; } = 0.80;
+    /// <summary>Cushion normal restitution at vanishing speed (curve intercept).</summary>
+    public double CushionRestitutionBase { get; init; } = 0.86;
+
+    /// <summary>Restitution lost per m/s of normal approach speed.</summary>
+    public double CushionRestitutionFalloff { get; init; } = 0.026;
+
+    /// <summary>Floor for the restitution curve, reached on very hard impacts.</summary>
+    public double CushionRestitutionMin { get; init; } = 0.60;
+
+    /// <summary>
+    /// Real cushion rubber is less elastic the harder it is compressed, so a
+    /// power drive comes back deader than a gentle roll. Modelling the curve
+    /// rather than one fixed number is what makes both hard bounces and slow
+    /// jaw rattles behave.
+    /// </summary>
+    public double CushionRestitutionAt(double normalSpeed) => System.Math.Clamp(
+        CushionRestitutionBase - CushionRestitutionFalloff * normalSpeed,
+        CushionRestitutionMin,
+        CushionRestitutionBase);
 
     /// <summary>Cushion tangential friction — produces english response off rails.</summary>
     public double CushionFriction { get; init; } = 0.20;

@@ -162,25 +162,39 @@ public static class Collisions
         // Normal impulse (equal masses, effective mass m/2), applied +n on b, −n on a.
         var jn = (1.0 + p.BallBallRestitution) * 0.5 * p.Mass * approach;
 
-        // In-plane tangential slip of a's surface relative to b's at the contact:
-        // spin contributes only through ωz (vertical slip from follow/draw is absorbed).
-        var t = n.Perp;
-        var slip = (a.Vel - b.Vel).Dot(t) + p.R * (a.AngVel.Z + b.AngVel.Z);
-
-        // Stick cap: effective tangential mass for two spheres is m/7.
-        var jtMax = p.BallBallFriction * jn;
-        var jtStick = Math.Abs(slip) * p.Mass / 7.0;
-        var jt = Math.Sign(slip) * Math.Min(jtMax, jtStick);
+        // Full 3D slip of a's surface against b's at the contact point. The tangent
+        // plane has an in-plane axis (driven by relative velocity and english) AND a
+        // vertical one (driven by follow/draw), so topspin and backspin transfer to
+        // the object ball instead of being discarded.
+        var n3 = new Vec3(n.X, n.Y, 0.0);
+        var ra = p.R * n3;                     // contact point relative to a's centre
+        var rb = -p.R * n3;                    // ... and to b's
+        var surfA = new Vec3(a.Vel.X, a.Vel.Y, 0.0) + a.AngVel.Cross(ra);
+        var surfB = new Vec3(b.Vel.X, b.Vel.Y, 0.0) + b.AngVel.Cross(rb);
+        var rel = surfA - surfB;
+        var slip = rel - rel.Dot(n3) * n3;
+        var slipLen = slip.Length;
 
         var invM = 1.0 / p.Mass;
-        a.Vel -= (jn * invM) * n + (jt * invM) * t;
-        b.Vel += (jn * invM) * n + (jt * invM) * t;
+        var inertia = 0.4 * p.Mass * p.R * p.R;
 
-        // Friction torque acts about the vertical axis only (in-plane impulse at an in-plane contact).
-        // τ = R·n × (∓jt·t̂) ⇒ Δωz = ∓ jt·R / I,  I = 2/5·m·R².
-        var dwz = jt * p.R / (0.4 * p.Mass * p.R * p.R);
-        a.AngVel = new Vec3(a.AngVel.X, a.AngVel.Y, a.AngVel.Z - dwz);
-        b.AngVel = new Vec3(b.AngVel.X, b.AngVel.Y, b.AngVel.Z - dwz);
+        a.Vel -= (jn * invM) * n;
+        b.Vel += (jn * invM) * n;
+
+        if (slipLen > 1e-12)
+        {
+            // Stick cap: effective tangential mass for two spheres is m/7.
+            var jt = Math.Min(p.BallBallFriction * jn, p.Mass * slipLen / 7.0);
+            var pa = (-jt / slipLen) * slip;   // friction opposes a's slip
+            var pb = -pa;
+
+            // Linear response stays in-plane — the cloth absorbs the vertical part,
+            // exactly as the cushion resolver does — while the torque keeps all of it.
+            a.Vel += new Vec2(pa.X, pa.Y) * invM;
+            b.Vel += new Vec2(pb.X, pb.Y) * invM;
+            a.AngVel += ra.Cross(pa) * (1.0 / inertia);
+            b.AngVel += rb.Cross(pb) * (1.0 / inertia);
+        }
 
         a.State = MotionState.Sliding;
         b.State = MotionState.Sliding;
@@ -199,7 +213,7 @@ public static class Collisions
         var v3 = new Vec3(ball.Vel.X, ball.Vel.Y, 0.0);
         var n3 = new Vec3(n.X, n.Y, 0.0);
 
-        var jn = -(1.0 + p.CushionRestitution) * p.Mass * vn;
+        var jn = -(1.0 + p.CushionRestitutionAt(-vn)) * p.Mass * vn;
 
         // Contact-point velocity and its tangential (non-normal) component.
         var u = v3 + ball.AngVel.Cross(r3);
