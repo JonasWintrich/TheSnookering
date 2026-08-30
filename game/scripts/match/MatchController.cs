@@ -328,7 +328,11 @@ public partial class MatchController : Node3D
         {
             var id = _state.Balls[i].Id;
             var color = type == GameType.EightBall ? BallView.PoolColor(id) : BallView.SnookerColor(id);
-            var texture = type == GameType.EightBall ? $"res://assets/balls/pool_{id}.png" : null;
+            // Snooker reds all share one texture; the maker's mark on every ball is
+            // what makes applied spin visible on otherwise plain colours.
+            var texture = type == GameType.EightBall
+                ? $"res://assets/balls/pool_{id}.png"
+                : $"res://assets/balls/snooker_{(SnookerBalls.IsRed(id) ? 1 : id)}.png";
             _views[i] = BallView.Create(id, (float)_table.Physics.R, color, texture);
             AddChild(_views[i]);
         }

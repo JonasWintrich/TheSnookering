@@ -133,6 +133,8 @@ public static class EnvironmentBuilder
             Position = new Vector3(0f, 0.5f, 0f),
             UpdateMode = ReflectionProbe.UpdateModeEnum.Once,
             Intensity = 1f,
+            // Keep the blown-out emissive lamp discs out of every reflection.
+            CullMask = ~LampLayer,
         });
 
         return root;
@@ -374,7 +376,12 @@ public static class EnvironmentBuilder
             OmniRange = 4.5f,
             OmniAttenuation = 1.4f,
             ShadowEnabled = true,
-            LightSize = 0.12f, // soft shadow penumbra
+            // A billiard ball is ~57 mm across. The old 12 cm emitter blurred its
+            // shadow away entirely, and Godot's default biases (0.02 / 1.0, tuned
+            // for human-scale scenes) pushed what was left off the ball itself.
+            LightSize = 0.035f,
+            ShadowBias = 0.005f,
+            ShadowNormalBias = 0.03f,
         });
 
         return lamp;

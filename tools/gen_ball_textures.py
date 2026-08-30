@@ -81,11 +81,58 @@ def make_ball(ball_id: int) -> Image.Image:
     return img
 
 
+# Snooker balls are plain colours, which makes their rotation invisible in game.
+# Real balls carry a small maker's mark; reproducing one lets the player actually
+# see the spin they applied. Ids match SnookerBalls: 0 cue, 1 red, 16..21 colours.
+SNOOKER_COLORS = {
+    0: (242, 237, 224),
+    1: (199, 20, 20),
+    16: (242, 209, 26),
+    17: (16, 107, 41),
+    18: (122, 71, 31),
+    19: (26, 64, 199),
+    20: (240, 140, 166),
+    21: (13, 13, 15),
+}
+
+
+def make_snooker_ball(ball_id: int) -> Image.Image:
+    color = SNOOKER_COLORS[ball_id]
+    img = Image.new("RGB", (W, H), color)
+    draw = ImageDraw.Draw(img)
+
+    # Mark colour: dark on light balls, light on dark ones, so it always reads.
+    luma = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+    mark = (28, 28, 30) if luma > 110 else (232, 228, 216)
+
+    if ball_id == 0:
+        # Cue ball: the classic spot marking, plus a fine ring, for maximum
+        # spin readability on the one ball the player watches most.
+        for u in (0.25, 0.75):
+            r = 13
+            draw.ellipse([u * W - r, H / 2 - r, u * W + r, H / 2 + r], fill=(190, 40, 40))
+        return img
+
+    # Maker's mark: a small ring with a dot, on two opposite sides.
+    for u in (0.25, 0.75):
+        cx, cy = u * W, H / 2
+        outer, inner = 17, 11
+        draw.ellipse([cx - outer, cy - outer, cx + outer, cy + outer], outline=mark, width=3)
+        draw.ellipse([cx - inner / 2, cy - inner / 2, cx + inner / 2, cy + inner / 2], fill=mark)
+
+    return img
+
+
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
     for ball_id in range(16):
         path = os.path.join(OUT, f"pool_{ball_id}.png")
         make_ball(ball_id).save(path)
+        print("wrote", os.path.normpath(path))
+
+    for ball_id in SNOOKER_COLORS:
+        path = os.path.join(OUT, f"snooker_{ball_id}.png")
+        make_snooker_ball(ball_id).save(path)
         print("wrote", os.path.normpath(path))
 
 

@@ -70,6 +70,7 @@ public partial class BallView : MeshInstance3D
             _radius = radius,
             Mesh = new SphereMesh { Radius = radius, Height = 2f * radius, RadialSegments = 48, Rings = 24 },
             MaterialOverride = material,
+            CastShadow = ShadowCastingSetting.On,
         };
     }
 

@@ -277,6 +277,7 @@ public static class TableBuilder
         {
             if (node is not MeshInstance3D mi || mi.Mesh is null)
                 continue;
+            mi.CastShadow = GeometryInstance3D.ShadowCastingSetting.On;
             for (var s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
             {
                 var name = mi.Mesh.SurfaceGetMaterial(s)?.ResourceName ?? "";
