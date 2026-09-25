@@ -19,6 +19,8 @@ public readonly struct Vec3 : IEquatable<Vec3>
         Z = z;
     }
 
+    //test123
+
     public static readonly Vec3 Zero = new(0.0, 0.0, 0.0);
 
     public static Vec3 operator +(Vec3 a, Vec3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
@@ -33,6 +35,8 @@ public readonly struct Vec3 : IEquatable<Vec3>
         Y * other.Z - Z * other.Y,
         Z * other.X - X * other.Z,
         X * other.Y - Y * other.X);
+
+
 
     public double LengthSquared => X * X + Y * Y + Z * Z;
     public double Length => Math.Sqrt(X * X + Y * Y + Z * Z);
